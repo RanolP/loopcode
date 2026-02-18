@@ -364,5 +364,11 @@ fn main() {
         xpui::run_gpui(DemoApp::new());
     } else {
         xpui::run_cpui(DemoApp::new());
+        println!("     ..::.");
+        println!("   .-=+++=-:     Hello");
+        println!("  .-+**#**+-.    loopcode session ended");
+        println!("  .-+*###*+-.    run again: cargo run");
+        println!("   :-=+++=-:");
+        println!("     .:::. ");
     }
 }

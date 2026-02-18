@@ -33,6 +33,7 @@ pub enum UiKeyInput {
     Enter,
     Submit,
     Esc,
+    Interrupt,
     Char(char),
 }
 
@@ -40,6 +41,7 @@ pub enum UiKeyInput {
 pub enum UiInputEvent {
     Key(UiKeyInput),
     ScrollLines(i16),
+    AltScreenActive,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -459,7 +461,7 @@ pub struct FocusState {
     focused: Option<FocusId>,
     focused_path: Option<FocusPath>,
     last_child_by_parent: HashMap<FocusPath, FocusPath>,
-    esc_armed: bool,
+    quit_armed: bool,
 }
 
 impl FocusState {
@@ -489,7 +491,7 @@ impl FocusState {
         self.focused = None;
         self.focused_path = None;
         self.last_child_by_parent.clear();
-        self.esc_armed = false;
+        self.quit_armed = false;
     }
 
     pub fn ensure_valid(&mut self, entries: &[FocusEntry]) {
@@ -719,23 +721,43 @@ impl FocusState {
         entries: &[FocusEntry],
     ) -> FocusNavOutcome {
         let UiInputEvent::Key(key) = event else {
-            self.esc_armed = false;
+            self.quit_armed = false;
             return FocusNavOutcome::Ignored;
         };
 
         let focused_kind = self.focused_entry(entries).map(|entry| entry.kind);
+        let focused_path = self
+            .focused_entry(entries)
+            .map(|entry| format!("{:?}", entry.path.0))
+            .unwrap_or_else(|| "<none>".to_string());
         let out = match key {
             UiKeyInput::Esc => {
-                if self.focus_parent(entries) {
-                    self.esc_armed = false;
+                let moved_parent = self.focus_parent(entries);
+                let out = if moved_parent {
                     FocusNavOutcome::Handled
-                } else if self.esc_armed {
-                    self.esc_armed = false;
+                } else {
+                    FocusNavOutcome::Ignored
+                };
+                append_focus_debug_line(&format!(
+                    "[focus esc] path={} moved_parent={} outcome={:?}",
+                    focused_path, moved_parent, out
+                ));
+                out
+            }
+            UiKeyInput::Interrupt => {
+                let armed_before = self.quit_armed;
+                let out = if self.quit_armed {
+                    self.quit_armed = false;
                     FocusNavOutcome::RequestQuit
                 } else {
-                    self.esc_armed = true;
+                    self.quit_armed = true;
                     FocusNavOutcome::Handled
-                }
+                };
+                append_focus_debug_line(&format!(
+                    "[focus interrupt] path={} armed_before={} armed_after={} outcome={:?}",
+                    focused_path, armed_before, self.quit_armed, out
+                ));
+                out
             }
             UiKeyInput::Tab => {
                 self.focus_next(entries);
@@ -769,10 +791,21 @@ impl FocusState {
             _ => FocusNavOutcome::Ignored,
         };
 
-        if key != UiKeyInput::Esc {
-            self.esc_armed = false;
+        if key != UiKeyInput::Interrupt {
+            self.quit_armed = false;
         }
         out
+    }
+}
+
+fn append_focus_debug_line(line: &str) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/loopcode_focus_debug.log")
+    {
+        let _ = std::io::Write::write_all(&mut f, line.as_bytes());
+        let _ = std::io::Write::write_all(&mut f, b"\n");
     }
 }
 

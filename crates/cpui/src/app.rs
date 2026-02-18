@@ -5,7 +5,7 @@ use std::{
     io::{self, Write},
     marker::PhantomData,
     rc::Rc,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::Duration,
 };
 
@@ -15,6 +15,7 @@ use crossterm::event::{
     PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
+use crossterm::style::ResetColor;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{cursor, terminal::Clear, terminal::ClearType};
 
@@ -29,6 +30,7 @@ use crate::{
 
 static NEXT_ENTITY_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_WINDOW_ID: AtomicU64 = AtomicU64::new(1);
+static ALT_SCREEN_ACTIVE: AtomicBool = AtomicBool::new(false);
 const KEYBOARD_FLAGS: KeyboardEnhancementFlags =
     KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
         .union(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
@@ -37,6 +39,10 @@ const KEYBOARD_FLAGS: KeyboardEnhancementFlags =
 
 trait WindowRenderer {
     fn render(&self, app: &mut App, window: &mut Window) -> io::Result<()>;
+}
+
+pub(crate) fn is_alt_screen_active() -> bool {
+    ALT_SCREEN_ACTIVE.load(Ordering::Relaxed)
 }
 
 struct ViewRenderer<V: 'static + Render> {
@@ -91,6 +97,7 @@ pub enum KeyInput {
     Enter,
     Submit,
     Esc,
+    Interrupt,
     Char(char),
 }
 
@@ -98,6 +105,7 @@ pub enum KeyInput {
 pub enum InputEvent {
     Key(KeyInput),
     ScrollLines(i16),
+    AltScreenActive,
 }
 
 pub struct App {
@@ -410,24 +418,34 @@ impl Application {
         F: 'static + FnOnce(&mut App),
         H: 'static + FnMut(&mut App, InputEvent) -> bool,
     {
-        let mut app = App::default();
-        on_finish_launching(&mut app);
-
         if self.headless {
+            let mut app = App::default();
+            on_finish_launching(&mut app);
             return;
         }
+
+        let _ = std::fs::write("/tmp/loopcode_focus_debug.log", "");
 
         if let Err(err) = terminal::enable_raw_mode() {
             eprintln!("cpui raw mode error: {err}");
             return;
         }
-        if let Err(err) = execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture) {
+        if let Err(err) = execute!(
+            io::stdout(),
+            EnterAlternateScreen,
+            Clear(ClearType::All),
+            cursor::MoveTo(0, 0),
+            EnableMouseCapture
+        ) {
             eprintln!("cpui mouse capture error: {err}");
             let _ = terminal::disable_raw_mode();
             return;
         }
+        ALT_SCREEN_ACTIVE.store(true, Ordering::Relaxed);
         let _ = execute!(io::stdout(), PushKeyboardEnhancementFlags(KEYBOARD_FLAGS));
-        let _terminal_guard = TerminalGuard;
+        let terminal_guard = TerminalGuard;
+        let mut app = App::default();
+        on_finish_launching(&mut app);
 
         if let Err(err) = app.render_all_windows() {
             eprintln!("cpui render error: {err}");
@@ -457,6 +475,8 @@ impl Application {
                 }
             }
         }
+
+        drop(terminal_guard);
     }
 }
 
@@ -465,21 +485,16 @@ struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let mut out = io::stdout();
-        let _ = execute!(out, Clear(ClearType::All), cursor::MoveTo(0, 0));
-        let _ = execute!(
-            out,
-            PopKeyboardEnhancementFlags,
-            DisableMouseCapture,
-            LeaveAlternateScreen
-        );
         let _ = terminal::disable_raw_mode();
         let _ = execute!(
             out,
-            Clear(ClearType::Purge),
-            Clear(ClearType::All),
-            cursor::MoveTo(0, 0)
+            DisableMouseCapture,
+            PopKeyboardEnhancementFlags,
+            ResetColor,
+            cursor::Show
         );
-        let _ = writeln!(out, "good bye!");
+        let _ = execute!(out, LeaveAlternateScreen);
+        ALT_SCREEN_ACTIVE.store(false, Ordering::Relaxed);
         let _ = out.flush();
     }
 }
@@ -487,6 +502,12 @@ impl Drop for TerminalGuard {
 fn map_input_event(event: Event) -> Option<InputEvent> {
     match event {
         Event::Key(key) if key.kind == KeyEventKind::Press => {
+            if matches!(key.code, KeyCode::Esc) {
+                append_focus_debug_line(&format!(
+                    "[cpui key] code=Esc modifiers={:?} kind={:?}",
+                    key.modifiers, key.kind
+                ));
+            }
             let word_modifier = key
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER);
@@ -514,6 +535,13 @@ fn map_input_event(event: Event) -> Option<InputEvent> {
                 KeyCode::Delete => Some(InputEvent::Key(KeyInput::Delete)),
                 KeyCode::Enter if submit_modifier => Some(InputEvent::Key(KeyInput::Submit)),
                 KeyCode::Enter => Some(InputEvent::Key(KeyInput::Enter)),
+                KeyCode::Char('c' | 'C') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    append_focus_debug_line(&format!(
+                        "[cpui key] code=Ctrl+C modifiers={:?} kind={:?}",
+                        key.modifiers, key.kind
+                    ));
+                    Some(InputEvent::Key(KeyInput::Interrupt))
+                }
                 KeyCode::Esc => Some(InputEvent::Key(KeyInput::Esc)),
                 KeyCode::Char(ch) => Some(InputEvent::Key(KeyInput::Char(ch))),
                 _ => None,
@@ -525,5 +553,16 @@ fn map_input_event(event: Event) -> Option<InputEvent> {
             _ => None,
         },
         _ => None,
+    }
+}
+
+fn append_focus_debug_line(line: &str) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/loopcode_focus_debug.log")
+    {
+        let _ = std::io::Write::write_all(&mut f, line.as_bytes());
+        let _ = std::io::Write::write_all(&mut f, b"\n");
     }
 }
