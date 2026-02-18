@@ -9,3 +9,4 @@ members = ["crates/*"]
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 xpui = { path = "crates/xpui", features = ["backend-gpui"] }
+unicode-width = "0.2"

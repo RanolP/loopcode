@@ -1,7 +1,7 @@
 use crate::{
     backend::Backend,
     node::{Axis, Node, RichText},
-    runtime::{FocusEntry, FocusKind, UiApp, UiInputEvent, UiKeyInput, WindowSize},
+    runtime::{FocusEntry, FocusNavOutcome, UiApp, UiInputEvent, UiKeyInput, WindowSize},
 };
 
 pub trait GpuiAdapter {
@@ -41,7 +41,6 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
         root_focus: gpui::FocusHandle,
         wheel_line_carry: f32,
         window_size: WindowSize,
-        esc_armed: bool,
     }
 
     impl<A: UiApp + 'static> Render for Host<A> {
@@ -64,85 +63,34 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
                 .font_family("DejaVu Sans")
                 .track_focus(&self.root_focus)
                 .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                    let mut handled = false;
-                    if event.keystroke.key == "tab" {
-                        if let Some(focus) = this.app.focus_state() {
-                            if event.keystroke.modifiers.shift {
-                                focus.focus_prev(&this.focus_order);
-                            } else {
-                                focus.focus_next(&this.focus_order);
-                            }
-                            handled = true;
-                        }
-                    }
-
-                    if !handled
-                        && matches!(
-                            event.keystroke.key.as_str(),
-                            "left" | "up" | "right" | "down"
-                        )
-                    {
-                        if let Some(focus) = this.app.focus_state() {
-                            let is_text_input = focus
-                                .focused_entry(&this.focus_order)
-                                .is_some_and(|entry| entry.kind == FocusKind::TextInput);
-                            if !is_text_input {
-                                handled = match event.keystroke.key.as_str() {
-                                    "left" | "up" => {
-                                        focus.focus_prev_sibling(&this.focus_order)
-                                            || focus.focus_prev_peer_branch(&this.focus_order)
-                                    }
-                                    "right" | "down" => {
-                                        focus.focus_next_sibling(&this.focus_order)
-                                            || focus.focus_next_peer_branch(&this.focus_order)
-                                    }
-                                    _ => false,
-                                };
-                            }
-                        }
-                    }
-
-                    if !handled && event.keystroke.key == "enter" {
-                        if let Some(focus) = this.app.focus_state() {
-                            let is_text_input = focus
-                                .focused_entry(&this.focus_order)
-                                .is_some_and(|entry| entry.kind == FocusKind::TextInput);
-                            if !is_text_input {
-                                handled = focus.focus_first_child(&this.focus_order);
-                            }
-                        }
-                    }
-
-                    if !handled && event.keystroke.key == "escape" {
-                        if let Some(focus) = this.app.focus_state() {
-                            if focus.focus_parent(&this.focus_order) {
-                                this.esc_armed = false;
-                            } else if this.esc_armed {
-                                cx.quit();
-                            } else {
-                                this.esc_armed = true;
-                            }
-                        } else if this.esc_armed {
-                            cx.quit();
+                    let mapped = if event.keystroke.key == "tab" {
+                        Some(if event.keystroke.modifiers.shift {
+                            UiKeyInput::BackTab
                         } else {
-                            this.esc_armed = true;
-                        }
-                        handled = true;
-                    }
+                            UiKeyInput::Tab
+                        })
+                    } else {
+                        map_gpui_key_event(event)
+                    };
 
-                    if !handled {
-                        this.esc_armed = false;
-                    }
+                    let Some(mapped) = mapped else {
+                        return;
+                    };
+                    let ui_event = UiInputEvent::Key(mapped);
 
-                    if !handled && let Some(mapped) = map_gpui_key_event(event) {
-                        this.app.on_input(UiInputEvent::Key(mapped));
-                        handled = true;
-                    }
+                    let nav_outcome = if let Some(focus) = this.app.focus_state() {
+                        focus.handle_navigation(ui_event, &this.focus_order)
+                    } else {
+                        FocusNavOutcome::Ignored
+                    };
 
-                    if handled {
-                        cx.notify();
-                        window.refresh();
+                    match nav_outcome {
+                        FocusNavOutcome::Ignored => this.app.on_input(ui_event),
+                        FocusNavOutcome::Handled => {}
+                        FocusNavOutcome::RequestQuit => cx.quit(),
                     }
+                    cx.notify();
+                    window.refresh();
                 }))
                 .on_scroll_wheel(cx.listener(
                     |this, event: &gpui::ScrollWheelEvent, window, cx| {
@@ -195,7 +143,6 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
                 root_focus: cx.focus_handle(),
                 wheel_line_carry: 0.0,
                 window_size: _size,
-                esc_armed: false,
             })
         });
         cx.activate(true);
@@ -211,6 +158,12 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
 #[cfg(feature = "backend-gpui")]
 fn map_gpui_key_event(event: &gpui::KeyDownEvent) -> Option<UiKeyInput> {
     let secondary = event.keystroke.modifiers.secondary();
+    let is_submit =
+        (secondary || event.keystroke.modifiers.control || event.keystroke.modifiers.platform)
+            && matches!(event.keystroke.key.as_str(), "enter" | "return");
+    if is_submit {
+        return Some(UiKeyInput::Submit);
+    }
     if secondary && matches!(event.keystroke.key_char.as_deref(), Some("w")) {
         return Some(UiKeyInput::BackspaceWord);
     }

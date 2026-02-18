@@ -31,6 +31,7 @@ pub enum UiKeyInput {
     BackspaceWord,
     Delete,
     Enter,
+    Submit,
     Esc,
     Char(char),
 }
@@ -39,6 +40,13 @@ pub enum UiKeyInput {
 pub enum UiInputEvent {
     Key(UiKeyInput),
     ScrollLines(i16),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FocusNavOutcome {
+    Ignored,
+    Handled,
+    RequestQuit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -292,6 +300,7 @@ pub struct FocusState {
     focused: Option<FocusId>,
     focused_path: Option<FocusPath>,
     last_child_by_parent: HashMap<FocusPath, FocusPath>,
+    esc_armed: bool,
 }
 
 impl FocusState {
@@ -321,6 +330,7 @@ impl FocusState {
         self.focused = None;
         self.focused_path = None;
         self.last_child_by_parent.clear();
+        self.esc_armed = false;
     }
 
     pub fn ensure_valid(&mut self, entries: &[FocusEntry]) {
@@ -543,6 +553,68 @@ impl FocusState {
 
         false
     }
+
+    pub fn handle_navigation(
+        &mut self,
+        event: UiInputEvent,
+        entries: &[FocusEntry],
+    ) -> FocusNavOutcome {
+        let UiInputEvent::Key(key) = event else {
+            self.esc_armed = false;
+            return FocusNavOutcome::Ignored;
+        };
+
+        let focused_kind = self.focused_entry(entries).map(|entry| entry.kind);
+        let out = match key {
+            UiKeyInput::Esc => {
+                if self.focus_parent(entries) {
+                    self.esc_armed = false;
+                    FocusNavOutcome::Handled
+                } else if self.esc_armed {
+                    self.esc_armed = false;
+                    FocusNavOutcome::RequestQuit
+                } else {
+                    self.esc_armed = true;
+                    FocusNavOutcome::Handled
+                }
+            }
+            UiKeyInput::Tab => {
+                self.focus_next(entries);
+                FocusNavOutcome::Handled
+            }
+            UiKeyInput::BackTab => {
+                self.focus_prev(entries);
+                FocusNavOutcome::Handled
+            }
+            UiKeyInput::Enter if focused_kind != Some(FocusKind::TextInput) => {
+                if self.focus_first_child(entries) {
+                    FocusNavOutcome::Handled
+                } else {
+                    FocusNavOutcome::Ignored
+                }
+            }
+            UiKeyInput::Left | UiKeyInput::Up if focused_kind != Some(FocusKind::TextInput) => {
+                if self.focus_prev_sibling(entries) || self.focus_prev_peer_branch(entries) {
+                    FocusNavOutcome::Handled
+                } else {
+                    FocusNavOutcome::Ignored
+                }
+            }
+            UiKeyInput::Right | UiKeyInput::Down if focused_kind != Some(FocusKind::TextInput) => {
+                if self.focus_next_sibling(entries) || self.focus_next_peer_branch(entries) {
+                    FocusNavOutcome::Handled
+                } else {
+                    FocusNavOutcome::Ignored
+                }
+            }
+            _ => FocusNavOutcome::Ignored,
+        };
+
+        if key != UiKeyInput::Esc {
+            self.esc_armed = false;
+        }
+        out
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -552,6 +624,94 @@ pub struct FocusListState {
     gap_lines: u16,
     focused_index: u16,
     scroll_offset: u16,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FocusListBinding {
+    first_focus_id: u64,
+}
+
+impl FocusListBinding {
+    pub fn new(first_focus_id: u64) -> Self {
+        Self { first_focus_id }
+    }
+
+    pub fn focus_id(&self, index: u16) -> FocusId {
+        FocusId(self.first_focus_id + index as u64)
+    }
+
+    pub fn focused_index(&self, focus: &FocusState, item_count: u16) -> Option<u16> {
+        let id = focus.focused()?.0;
+        let end = self.first_focus_id + item_count as u64;
+        if (self.first_focus_id..end).contains(&id) {
+            Some((id - self.first_focus_id) as u16)
+        } else {
+            None
+        }
+    }
+
+    pub fn sync_list_from_focus(&self, focus: &FocusState, list: &mut FocusListState) {
+        if let Some(index) = self.focused_index(focus, list.item_count()) {
+            list.set_focused_index(index);
+        }
+    }
+
+    pub fn handle_input(
+        &self,
+        focus: &mut FocusState,
+        list: &mut FocusListState,
+        event: UiInputEvent,
+    ) -> bool {
+        let Some(index) = self.focused_index(focus, list.item_count()) else {
+            return false;
+        };
+        list.set_focused_index(index);
+
+        let handled = match event {
+            UiInputEvent::Key(UiKeyInput::Up) => {
+                list.move_focus_by(-1);
+                true
+            }
+            UiInputEvent::Key(UiKeyInput::Down) => {
+                list.move_focus_by(1);
+                true
+            }
+            UiInputEvent::Key(UiKeyInput::PageUp) => {
+                list.move_focus_by(-(list.viewport_lines() as i16));
+                true
+            }
+            UiInputEvent::Key(UiKeyInput::PageDown) => {
+                list.move_focus_by(list.viewport_lines() as i16);
+                true
+            }
+            UiInputEvent::Key(UiKeyInput::Home) => {
+                list.set_focused_index(0);
+                true
+            }
+            UiInputEvent::Key(UiKeyInput::End) => {
+                list.set_focused_index(list.item_count().saturating_sub(1));
+                true
+            }
+            UiInputEvent::Key(UiKeyInput::Tab | UiKeyInput::BackTab) => {
+                list.ensure_focused_visible();
+                true
+            }
+            UiInputEvent::ScrollLines(lines) if lines < 0 => {
+                list.move_focus_by(-(lines.unsigned_abs() as i16));
+                true
+            }
+            UiInputEvent::ScrollLines(lines) if lines > 0 => {
+                list.move_focus_by(lines);
+                true
+            }
+            _ => false,
+        };
+
+        if handled {
+            focus.set_focused(self.focus_id(list.focused_index()));
+        }
+        handled
+    }
 }
 
 impl FocusListState {
@@ -577,8 +737,24 @@ impl FocusListState {
         self.viewport_lines
     }
 
+    pub fn set_viewport_lines(&mut self, viewport_lines: u16) {
+        self.viewport_lines = viewport_lines.max(1);
+        self.ensure_focused_visible();
+    }
+
     pub fn item_count(&self) -> u16 {
         self.item_heights.len() as u16
+    }
+
+    pub fn set_item_heights(&mut self, item_heights: Vec<u16>) {
+        self.item_heights = item_heights;
+        if self.item_heights.is_empty() {
+            self.focused_index = 0;
+            self.scroll_offset = 0;
+            return;
+        }
+        self.focused_index = self.focused_index.min(self.item_count().saturating_sub(1));
+        self.ensure_focused_visible();
     }
 
     pub fn max_scroll_offset(&self) -> u16 {

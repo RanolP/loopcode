@@ -3,7 +3,7 @@ use cpui::{AppContext, IntoElement};
 use crate::{
     backend::Backend,
     node::{Axis, Node, RichText, TextInput},
-    runtime::{FocusEntry, FocusKind, UiApp, UiInputEvent, UiKeyInput, WindowSize},
+    runtime::{FocusEntry, FocusNavOutcome, UiApp, UiInputEvent, UiKeyInput, WindowSize},
     style::{Rgb, TextStyle},
 };
 
@@ -30,7 +30,6 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
         app: A,
         focus_order: Vec<FocusEntry>,
         window_size: WindowSize,
-        esc_armed: bool,
     }
 
     impl<A: UiApp + 'static> cpui::Render for Host<A> {
@@ -72,7 +71,6 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
                         app,
                         focus_order: Vec::new(),
                         window_size: size,
-                        esc_armed: false,
                     });
                     cx.set_global(HostEntity(entity.clone()));
                     entity
@@ -88,93 +86,20 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
 
             let mut should_quit = false;
             let _ = cx.update_entity(&host_entity, |host, _| {
-                let handled_focus = match event {
-                    cpui::InputEvent::Key(cpui::KeyInput::Tab) => {
-                        if let Some(focus) = host.app.focus_state() {
-                            focus.focus_next(&host.focus_order);
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    cpui::InputEvent::Key(cpui::KeyInput::BackTab) => {
-                        if let Some(focus) = host.app.focus_state() {
-                            focus.focus_prev(&host.focus_order);
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    cpui::InputEvent::Key(cpui::KeyInput::Left | cpui::KeyInput::Up) => {
-                        if let Some(focus) = host.app.focus_state() {
-                            let is_text_input = focus
-                                .focused_entry(&host.focus_order)
-                                .is_some_and(|entry| entry.kind == FocusKind::TextInput);
-                            if !is_text_input {
-                                focus.focus_prev_sibling(&host.focus_order)
-                                    || focus.focus_prev_peer_branch(&host.focus_order)
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    }
-                    cpui::InputEvent::Key(cpui::KeyInput::Right | cpui::KeyInput::Down) => {
-                        if let Some(focus) = host.app.focus_state() {
-                            let is_text_input = focus
-                                .focused_entry(&host.focus_order)
-                                .is_some_and(|entry| entry.kind == FocusKind::TextInput);
-                            if !is_text_input {
-                                focus.focus_next_sibling(&host.focus_order)
-                                    || focus.focus_next_peer_branch(&host.focus_order)
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    }
-                    cpui::InputEvent::Key(cpui::KeyInput::Enter) => {
-                        if let Some(focus) = host.app.focus_state() {
-                            let is_text_input = focus
-                                .focused_entry(&host.focus_order)
-                                .is_some_and(|entry| entry.kind == FocusKind::TextInput);
-                            if !is_text_input {
-                                focus.focus_first_child(&host.focus_order)
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    }
-                    cpui::InputEvent::Key(cpui::KeyInput::Esc) => {
-                        if let Some(focus) = host.app.focus_state() {
-                            if focus.focus_parent(&host.focus_order) {
-                                host.esc_armed = false;
-                            } else if host.esc_armed {
-                                should_quit = true;
-                            } else {
-                                host.esc_armed = true;
-                            }
-                            true
-                        } else if host.esc_armed {
-                            should_quit = true;
-                            true
-                        } else {
-                            host.esc_armed = true;
-                            true
-                        }
-                    }
-                    _ => false,
+                let Some(event) = from_cpui_input(event) else {
+                    return;
                 };
 
-                if !handled_focus {
-                    host.esc_armed = false;
-                    if let Some(event) = from_cpui_input(event) {
-                        host.app.on_input(event);
-                    }
+                let nav_outcome = if let Some(focus) = host.app.focus_state() {
+                    focus.handle_navigation(event, &host.focus_order)
+                } else {
+                    FocusNavOutcome::Ignored
+                };
+
+                match nav_outcome {
+                    FocusNavOutcome::Ignored => host.app.on_input(event),
+                    FocusNavOutcome::Handled => {}
+                    FocusNavOutcome::RequestQuit => should_quit = true,
                 }
             });
 
@@ -298,6 +223,7 @@ fn from_cpui_input(event: cpui::InputEvent) -> Option<UiInputEvent> {
                 cpui::KeyInput::BackspaceWord => UiKeyInput::BackspaceWord,
                 cpui::KeyInput::Delete => UiKeyInput::Delete,
                 cpui::KeyInput::Enter => UiKeyInput::Enter,
+                cpui::KeyInput::Submit => UiKeyInput::Submit,
                 cpui::KeyInput::Esc => UiKeyInput::Esc,
                 cpui::KeyInput::Char(ch) => UiKeyInput::Char(ch),
             };

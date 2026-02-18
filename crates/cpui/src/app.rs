@@ -82,6 +82,7 @@ pub enum KeyInput {
     BackspaceWord,
     Delete,
     Enter,
+    Submit,
     Esc,
     Char(char),
 }
@@ -478,6 +479,11 @@ fn map_input_event(event: Event) -> Option<InputEvent> {
                     Some(InputEvent::Key(KeyInput::BackspaceWord))
                 }
                 KeyCode::Delete => Some(InputEvent::Key(KeyInput::Delete)),
+                KeyCode::Enter if secondary => Some(InputEvent::Key(KeyInput::Submit)),
+                // Many terminals do not expose Ctrl+Enter distinctly and send Ctrl+J/Ctrl+M instead.
+                KeyCode::Char('j' | 'm') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Some(InputEvent::Key(KeyInput::Submit))
+                }
                 KeyCode::Enter => Some(InputEvent::Key(KeyInput::Enter)),
                 KeyCode::Esc => Some(InputEvent::Key(KeyInput::Esc)),
                 KeyCode::Char(ch) => Some(InputEvent::Key(KeyInput::Char(ch))),
