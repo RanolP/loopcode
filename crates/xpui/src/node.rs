@@ -326,7 +326,7 @@ impl Node {
                     out.push(FocusEntry {
                         id,
                         path: FocusPath(path.clone()),
-                        kind: FocusKind::Generic,
+                        kind: FocusKind::ScrollRegion,
                     });
                 }
                 path.push(0);

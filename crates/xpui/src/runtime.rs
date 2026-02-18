@@ -1,4 +1,5 @@
 use crate::{FocusId, Node};
+use std::collections::HashMap;
 
 pub trait UiApp {
     fn render(&mut self) -> Node;
@@ -44,6 +45,7 @@ pub enum UiInputEvent {
 pub enum FocusKind {
     Generic,
     TextInput,
+    ScrollRegion,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -289,6 +291,7 @@ fn next_word_boundary(value: &str, cursor: usize) -> usize {
 pub struct FocusState {
     focused: Option<FocusId>,
     focused_path: Option<FocusPath>,
+    last_child_by_parent: HashMap<FocusPath, FocusPath>,
 }
 
 impl FocusState {
@@ -317,6 +320,7 @@ impl FocusState {
     pub fn clear_focus(&mut self) {
         self.focused = None;
         self.focused_path = None;
+        self.last_child_by_parent.clear();
     }
 
     pub fn ensure_valid(&mut self, entries: &[FocusEntry]) {
@@ -389,6 +393,9 @@ impl FocusState {
         for depth in (1..path.0.len()).rev() {
             let ancestor = FocusPath(path.0[..depth].to_vec());
             if let Some(entry) = entries.iter().find(|entry| entry.path == ancestor) {
+                if matches!(entry.kind, FocusKind::ScrollRegion) {
+                    self.last_child_by_parent.insert(ancestor, path.clone());
+                }
                 self.set_focused_entry(entry);
                 return true;
             }
@@ -405,6 +412,14 @@ impl FocusState {
             return false;
         };
         let current = &entries[current_idx];
+        if matches!(current.kind, FocusKind::ScrollRegion) {
+            if let Some(saved_child) = self.last_child_by_parent.get(&current.path)
+                && let Some(entry) = entries.iter().find(|entry| entry.path == *saved_child)
+            {
+                self.set_focused_entry(entry);
+                return true;
+            }
+        }
         let mut candidates = entries
             .iter()
             .filter(|entry| {

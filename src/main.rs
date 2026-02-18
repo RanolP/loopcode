@@ -17,7 +17,6 @@ struct DemoApp {
 impl DemoApp {
     const INPUT_CONTAINER_ID: u64 = 10;
     const INPUT_ID: u64 = 1;
-    const SCROLL_CONTAINER_ID: u64 = 20;
     const SCROLL_ID: u64 = 2;
     const ITEM_GAP_LINES: u16 = 1;
     const FIRST_ITEM_ID: u64 = 1000;
@@ -62,8 +61,7 @@ impl DemoApp {
     }
 
     fn is_scroll_focused(&self) -> bool {
-        self.focus.focused() == Some(xpui::FocusId(Self::SCROLL_CONTAINER_ID))
-            || self.focus.focused() == Some(xpui::FocusId(Self::SCROLL_ID))
+        self.focus.focused() == Some(xpui::FocusId(Self::SCROLL_ID))
     }
 
     fn item_line_height(index: u16) -> u16 {
@@ -158,10 +156,10 @@ impl xpui::UiApp for DemoApp {
                 .child(
                     xpui::container(
                         xpui::scroll_view(list)
+                            .focus(xpui::FocusId(Self::SCROLL_ID))
                             .viewport_lines(self.list.viewport_lines())
                             .offset_lines(self.list.scroll_offset()),
                     )
-                    .focus(xpui::FocusId(Self::SCROLL_CONTAINER_ID))
                     .style(if scroll_focused {
                         xpui::BoxStyle::default()
                             .bg(xpui::rgb(0x1f2a36))
