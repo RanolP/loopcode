@@ -9,7 +9,10 @@ use std::{
     time::Duration,
 };
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseEventKind};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind,
+};
+use crossterm::execute;
 use crossterm::terminal;
 
 use crate::{
@@ -401,6 +404,11 @@ impl Application {
             eprintln!("cpui raw mode error: {err}");
             return;
         }
+        if let Err(err) = execute!(io::stdout(), EnableMouseCapture) {
+            eprintln!("cpui mouse capture error: {err}");
+            let _ = terminal::disable_raw_mode();
+            return;
+        }
         let _terminal_guard = TerminalGuard;
 
         if let Err(err) = app.render_all_windows() {
@@ -431,6 +439,7 @@ struct TerminalGuard;
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        let _ = execute!(io::stdout(), DisableMouseCapture);
         let _ = terminal::disable_raw_mode();
     }
 }

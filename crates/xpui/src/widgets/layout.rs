@@ -1,5 +1,5 @@
 use crate::{
-    node::{Axis, Container, IntoNode, Node, Stack},
+    node::{Axis, Container, IntoNode, Node, ScrollView, Stack},
     style::BoxStyle,
 };
 
@@ -75,6 +75,38 @@ impl IntoNode for ContainerWidget {
     }
 }
 
+pub struct ScrollViewWidget {
+    inner: ScrollView,
+}
+
+impl ScrollViewWidget {
+    pub fn new(child: impl IntoNode) -> Self {
+        Self {
+            inner: ScrollView {
+                viewport_lines: None,
+                offset_lines: 0,
+                child: Box::new(child.into_node()),
+            },
+        }
+    }
+
+    pub fn viewport_lines(mut self, lines: u16) -> Self {
+        self.inner.viewport_lines = Some(lines.max(1));
+        self
+    }
+
+    pub fn offset_lines(mut self, lines: u16) -> Self {
+        self.inner.offset_lines = lines;
+        self
+    }
+}
+
+impl IntoNode for ScrollViewWidget {
+    fn into_node(self) -> Node {
+        Node::ScrollView(self.inner)
+    }
+}
+
 pub fn row() -> StackWidget {
     StackWidget::row()
 }
@@ -85,4 +117,8 @@ pub fn column() -> StackWidget {
 
 pub fn container(child: impl IntoNode) -> ContainerWidget {
     ContainerWidget::new(child)
+}
+
+pub fn scroll_view(child: impl IntoNode) -> ScrollViewWidget {
+    ScrollViewWidget::new(child)
 }

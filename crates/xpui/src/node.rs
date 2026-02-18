@@ -34,6 +34,13 @@ pub struct Container {
 }
 
 #[derive(Clone, Debug)]
+pub struct ScrollView {
+    pub viewport_lines: Option<u16>,
+    pub offset_lines: u16,
+    pub child: Box<Node>,
+}
+
+#[derive(Clone, Debug)]
 pub struct RichText {
     pub runs: Vec<TextRun>,
 }
@@ -59,6 +66,7 @@ pub struct TextRun {
 pub enum Node {
     Stack(Stack),
     Container(Container),
+    ScrollView(ScrollView),
     RichText(RichText),
     Empty,
 }

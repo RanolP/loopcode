@@ -2,6 +2,28 @@ use crate::Node;
 
 pub trait UiApp {
     fn render(&mut self) -> Node;
+
+    fn on_input(&mut self, _event: UiInputEvent) {}
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiKeyInput {
+    Tab,
+    BackTab,
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+    Esc,
+    Char(char),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiInputEvent {
+    Key(UiKeyInput),
+    ScrollLines(i16),
 }
 
 #[derive(Clone, Copy, Debug)]

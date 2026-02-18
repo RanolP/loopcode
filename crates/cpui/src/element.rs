@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::io;
 
 use taffy::prelude::*;
+use taffy::{Overflow, Point};
 
 use crate::{
     color::Rgba,
@@ -19,6 +20,7 @@ enum LayoutDisplay {
 #[derive(Clone, Debug)]
 pub enum AnyElement {
     Div(Div),
+    ScrollView(ScrollView),
     Text(String),
     InlineText(StyledText),
     Empty,
@@ -37,6 +39,12 @@ impl IntoElement for AnyElement {
 impl IntoElement for Div {
     fn into_any_element(self) -> AnyElement {
         AnyElement::Div(self)
+    }
+}
+
+impl IntoElement for ScrollView {
+    fn into_any_element(self) -> AnyElement {
+        AnyElement::ScrollView(self)
     }
 }
 
@@ -95,8 +103,23 @@ pub struct Div {
     children: Vec<AnyElement>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ScrollView {
+    viewport_lines: Option<u16>,
+    offset_lines: u16,
+    child: Box<AnyElement>,
+}
+
 pub fn div() -> Div {
     Div::default()
+}
+
+pub fn scroll_view(child: impl IntoElement) -> ScrollView {
+    ScrollView {
+        viewport_lines: None,
+        offset_lines: 0,
+        child: Box::new(child.into_any_element()),
+    }
 }
 
 impl Div {
@@ -197,10 +220,55 @@ impl Div {
     }
 }
 
+impl ScrollView {
+    pub fn viewport_lines(mut self, lines: u16) -> Self {
+        self.viewport_lines = Some(lines.max(1));
+        self
+    }
+
+    pub fn offset_lines(mut self, lines: u16) -> Self {
+        self.offset_lines = lines;
+        self
+    }
+}
+
 struct TextLeaf {
     node: NodeId,
     inline: StyledText,
     color: Option<Rgba>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ScrollNode {
+    offset_lines: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Rect {
+    pub(crate) left: i32,
+    pub(crate) top: i32,
+    pub(crate) right: i32,
+    pub(crate) bottom: i32,
+}
+
+impl Rect {
+    fn intersect(self, other: Rect) -> Option<Rect> {
+        let left = self.left.max(other.left);
+        let top = self.top.max(other.top);
+        let right = self.right.min(other.right);
+        let bottom = self.bottom.min(other.bottom);
+
+        if left >= right || top >= bottom {
+            None
+        } else {
+            Some(Rect {
+                left,
+                top,
+                right,
+                bottom,
+            })
+        }
+    }
 }
 
 fn taffy_style_from(div: &Div) -> taffy::style::Style {
@@ -246,6 +314,7 @@ fn build_layout_tree(
     inherited_color: Option<Rgba>,
     leaves: &mut Vec<TextLeaf>,
     parents: &mut HashMap<NodeId, NodeId>,
+    scroll_nodes: &mut HashMap<NodeId, ScrollNode>,
 ) -> io::Result<NodeId> {
     match element {
         AnyElement::Empty => taffy
@@ -298,6 +367,7 @@ fn build_layout_tree(
                     child_color,
                     leaves,
                     parents,
+                    scroll_nodes,
                 )?);
             }
             let node = taffy
@@ -306,6 +376,43 @@ fn build_layout_tree(
             for child in child_nodes {
                 parents.insert(child, node);
             }
+            Ok(node)
+        }
+        AnyElement::ScrollView(scroll) => {
+            let child = build_layout_tree(
+                taffy,
+                &scroll.child,
+                inherited_color,
+                leaves,
+                parents,
+                scroll_nodes,
+            )?;
+
+            let mut style = taffy::style::Style::default();
+            style.flex_grow = 0.0;
+            style.flex_shrink = 0.0;
+            style.overflow = Point {
+                x: Overflow::Hidden,
+                y: Overflow::Hidden,
+            };
+            style.size = Size {
+                width: Dimension::Auto,
+                height: scroll
+                    .viewport_lines
+                    .map(|h| Dimension::Length(h as f32))
+                    .unwrap_or(Dimension::Auto),
+            };
+
+            let node = taffy
+                .new_with_children(style, &[child])
+                .map_err(io::Error::other)?;
+            parents.insert(child, node);
+            scroll_nodes.insert(
+                node,
+                ScrollNode {
+                    offset_lines: scroll.offset_lines as f32,
+                },
+            );
             Ok(node)
         }
     }
@@ -320,8 +427,16 @@ pub(crate) fn render_element(
     let mut taffy = TaffyTree::new();
     let mut leaves = Vec::new();
     let mut parents = HashMap::new();
+    let mut scroll_nodes = HashMap::new();
 
-    let root = build_layout_tree(&mut taffy, element, None, &mut leaves, &mut parents)?;
+    let root = build_layout_tree(
+        &mut taffy,
+        element,
+        None,
+        &mut leaves,
+        &mut parents,
+        &mut scroll_nodes,
+    )?;
 
     taffy
         .compute_layout(
@@ -334,12 +449,45 @@ pub(crate) fn render_element(
         .map_err(io::Error::other)?;
 
     let mut absolute_cache: HashMap<NodeId, (f32, f32)> = HashMap::new();
+    let screen = Rect {
+        left: 0,
+        top: 0,
+        right: terminal_width as i32,
+        bottom: terminal_height as i32,
+    };
 
     for leaf in leaves {
         let (abs_x, abs_y) = absolute_location(leaf.node, &taffy, &parents, &mut absolute_cache)?;
-        let x = abs_x.max(0.0) as u16;
-        let y = abs_y.max(0.0) as u16;
-        leaf.inline.render_at(out, x, y, leaf.color)?;
+        let mut y = abs_y;
+        let mut clip = Some(screen);
+        let mut current = leaf.node;
+
+        while let Some(parent) = parents.get(&current).copied() {
+            if let Some(scroll) = scroll_nodes.get(&parent).copied() {
+                y -= scroll.offset_lines;
+
+                let (sx, sy) = absolute_location(parent, &taffy, &parents, &mut absolute_cache)?;
+                let layout = taffy.layout(parent).map_err(io::Error::other)?;
+                let bounds = Rect {
+                    left: sx.floor() as i32,
+                    top: sy.floor() as i32,
+                    right: (sx + layout.size.width).ceil() as i32,
+                    bottom: (sy + layout.size.height).ceil() as i32,
+                };
+                clip = clip.and_then(|existing| existing.intersect(bounds));
+            }
+            current = parent;
+        }
+
+        if let Some(clip) = clip {
+            leaf.inline.render_at_clipped(
+                out,
+                abs_x.floor() as i32,
+                y.floor() as i32,
+                leaf.color,
+                clip,
+            )?;
+        }
     }
 
     Ok(())
@@ -381,8 +529,16 @@ mod tests {
         let mut taffy = TaffyTree::new();
         let mut leaves = Vec::new();
         let mut parents = HashMap::new();
+        let mut scroll_nodes = HashMap::new();
 
-        let root = build_layout_tree(&mut taffy, element, None, &mut leaves, &mut parents)?;
+        let root = build_layout_tree(
+            &mut taffy,
+            element,
+            None,
+            &mut leaves,
+            &mut parents,
+            &mut scroll_nodes,
+        )?;
         taffy
             .compute_layout(
                 root,

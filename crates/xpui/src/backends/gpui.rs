@@ -100,6 +100,14 @@ fn node_to_gpui(node: Node) -> gpui::AnyElement {
             }
             out.child(node_to_gpui(*container.child)).into_any_element()
         }
+        Node::ScrollView(scroll) => {
+            let mut out = div().overflow_hidden();
+            out.style().overflow.y = Some(gpui::Overflow::Scroll);
+            if let Some(lines) = scroll.viewport_lines {
+                out = out.h(gpui::px(lines as f32));
+            }
+            out.child(node_to_gpui(*scroll.child)).into_any_element()
+        }
         Node::Stack(stack) => {
             let mut out = div().flex();
             if matches!(stack.axis, Axis::Column) {

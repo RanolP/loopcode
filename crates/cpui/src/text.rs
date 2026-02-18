@@ -7,10 +7,10 @@ use crossterm::{
         Attribute, Color as TermColor, Print, ResetColor, SetAttribute, SetBackgroundColor,
         SetForegroundColor,
     },
-    terminal::{Clear, ClearType},
 };
 
 use crate::color::Rgba;
+use crate::element::Rect;
 
 #[derive(Clone, Debug, Default)]
 pub struct TextStyle {
@@ -132,22 +132,19 @@ impl StyledText {
         lines
     }
 
-    pub(crate) fn render_at(
+    pub(crate) fn render_at_clipped(
         &self,
         out: &mut impl io::Write,
-        x: u16,
-        y: u16,
+        x: i32,
+        y: i32,
         inherited_color: Option<Rgba>,
+        clip: Rect,
     ) -> io::Result<()> {
-        let mut cursor_x = 0u16;
-        let mut cursor_y = 0u16;
+        let mut cursor_x = 0i32;
+        let mut cursor_y = 0i32;
 
         for run in &self.runs {
-            execute!(
-                out,
-                MoveTo(x.saturating_add(cursor_x), y.saturating_add(cursor_y)),
-                SetAttribute(Attribute::Reset)
-            )?;
+            execute!(out, SetAttribute(Attribute::Reset))?;
 
             if let Some(color) = run.style.color.or(inherited_color) {
                 execute!(
@@ -186,14 +183,19 @@ impl StyledText {
                 if ch == '\n' {
                     cursor_y = cursor_y.saturating_add(1);
                     cursor_x = 0;
-                    execute!(out, MoveTo(x, y.saturating_add(cursor_y)))?;
-                } else {
-                    if cursor_x == 0 {
-                        execute!(out, Clear(ClearType::UntilNewLine))?;
-                    }
-                    execute!(out, Print(ch))?;
-                    cursor_x = cursor_x.saturating_add(1);
+                    continue;
                 }
+
+                let draw_x = x.saturating_add(cursor_x);
+                let draw_y = y.saturating_add(cursor_y);
+                if draw_x >= clip.left
+                    && draw_x < clip.right
+                    && draw_y >= clip.top
+                    && draw_y < clip.bottom
+                {
+                    execute!(out, MoveTo(draw_x as u16, draw_y as u16), Print(ch))?;
+                }
+                cursor_x = cursor_x.saturating_add(1);
             }
             execute!(out, SetAttribute(Attribute::Reset), ResetColor)?;
         }

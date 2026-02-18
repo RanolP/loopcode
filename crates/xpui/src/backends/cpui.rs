@@ -1,9 +1,11 @@
+use std::{cell::RefCell, rc::Rc};
+
 use cpui::IntoElement;
 
 use crate::{
     backend::Backend,
     node::{Axis, Node, RichText},
-    runtime::{UiApp, WindowSize},
+    runtime::{UiApp, UiInputEvent, UiKeyInput, WindowSize},
     style::{Rgb, TextStyle},
 };
 
@@ -19,7 +21,7 @@ impl Backend for CpuiBackend {
 
 pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
     struct Host<A> {
-        app: A,
+        app: Rc<RefCell<A>>,
     }
 
     impl<A: UiApp + 'static> cpui::Render for Host<A> {
@@ -29,27 +31,50 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
             _cx: &mut cpui::Context<'_, Self>,
         ) -> impl cpui::IntoElement {
             let mut backend = CpuiBackend;
-            crate::render(&mut backend, self.app.render())
+            crate::render(&mut backend, self.app.borrow_mut().render())
         }
     }
 
-    cpui::Application::new().run(move |cx: &mut cpui::App| {
-        let bounds = cpui::Bounds::centered(
-            None,
-            cpui::size(cpui::px(size.width), cpui::px(size.height)),
-            cx,
-        );
+    let app = Rc::new(RefCell::new(app));
+    let app_for_window = app.clone();
+    let app_for_input = app.clone();
 
-        let _ = cx.open_window(
-            cpui::WindowOptions {
-                window_bounds: Some(cpui::WindowBounds::Windowed(bounds)),
-                ..cpui::WindowOptions::default()
-            },
-            |_window, cx| cx.new(|_cx| Host { app }),
-        );
+    cpui::Application::new().run_with_input_handler(
+        move |cx: &mut cpui::App| {
+            let bounds = cpui::Bounds::centered(
+                None,
+                cpui::size(cpui::px(size.width), cpui::px(size.height)),
+                cx,
+            );
 
-        cx.activate(true);
-    });
+            let _ = cx.open_window(
+                cpui::WindowOptions {
+                    window_bounds: Some(cpui::WindowBounds::Windowed(bounds)),
+                    ..cpui::WindowOptions::default()
+                },
+                |_window, cx| {
+                    let app = app_for_window.clone();
+                    cx.new(|_cx| Host { app })
+                },
+            );
+
+            cx.activate(true);
+        },
+        move |_cx: &mut cpui::App, event| {
+            if matches!(
+                event,
+                cpui::InputEvent::Key(cpui::KeyInput::Char('q'))
+                    | cpui::InputEvent::Key(cpui::KeyInput::Esc)
+            ) {
+                return true;
+            }
+
+            if let Some(event) = from_cpui_input(event) {
+                app_for_input.borrow_mut().on_input(event);
+            }
+            false
+        },
+    );
 }
 
 fn node_to_cpui(node: Node) -> cpui::AnyElement {
@@ -65,6 +90,14 @@ fn node_to_cpui(node: Node) -> cpui::AnyElement {
                 out = out.text_color(to_cpui_color(text_color));
             }
             out.child(node_to_cpui(*container.child)).into_any_element()
+        }
+        Node::ScrollView(scroll) => {
+            let mut out =
+                cpui::scroll_view(node_to_cpui(*scroll.child)).offset_lines(scroll.offset_lines);
+            if let Some(lines) = scroll.viewport_lines {
+                out = out.viewport_lines(lines);
+            }
+            out.into_any_element()
         }
         Node::Stack(stack) => {
             let mut out = cpui::div().flex();
@@ -131,4 +164,25 @@ fn to_cpui_text_style(style: TextStyle) -> cpui::TextStyle {
 
 fn to_cpui_color(color: Rgb) -> cpui::Rgba {
     cpui::rgb(color.0)
+}
+
+fn from_cpui_input(event: cpui::InputEvent) -> Option<UiInputEvent> {
+    match event {
+        cpui::InputEvent::Key(key) => {
+            let mapped = match key {
+                cpui::KeyInput::Tab => UiKeyInput::Tab,
+                cpui::KeyInput::BackTab => UiKeyInput::BackTab,
+                cpui::KeyInput::Up => UiKeyInput::Up,
+                cpui::KeyInput::Down => UiKeyInput::Down,
+                cpui::KeyInput::PageUp => UiKeyInput::PageUp,
+                cpui::KeyInput::PageDown => UiKeyInput::PageDown,
+                cpui::KeyInput::Home => UiKeyInput::Home,
+                cpui::KeyInput::End => UiKeyInput::End,
+                cpui::KeyInput::Esc => UiKeyInput::Esc,
+                cpui::KeyInput::Char(ch) => UiKeyInput::Char(ch),
+            };
+            Some(UiInputEvent::Key(mapped))
+        }
+        cpui::InputEvent::ScrollLines(lines) => Some(UiInputEvent::ScrollLines(lines)),
+    }
 }

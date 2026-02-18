@@ -13,7 +13,7 @@ pub use color::{Rgba, black, blue, green, red, rgb, white, yellow};
 pub use context::{
     AppContext, Context, EventEmitter, Focusable, Global, GpuiBorrow, Reservation, VisualContext,
 };
-pub use element::{AnyElement, Div, IntoElement, div};
+pub use element::{AnyElement, Div, IntoElement, ScrollView, div, scroll_view};
 pub use entity::{AnyEntity, AnyView, Entity, EntityId, WeakEntity, WindowId};
 pub use geometry::{Bounds, Pixels, Point, Size, px, size};
 pub use text::{StyledText, TextRun, TextStyle, styled_text};
