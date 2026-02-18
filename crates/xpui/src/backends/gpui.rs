@@ -189,9 +189,7 @@ fn node_to_gpui(node: Node, viewport_columns: usize) -> gpui::AnyElement {
     match node {
         Node::Empty => div().into_any_element(),
         Node::RichText(text) => rich_text_to_gpui(text).into_any_element(),
-        Node::TextInput(input) => {
-            rich_text_to_gpui(input.to_wrapped_rich_text(viewport_columns)).into_any_element()
-        }
+        Node::TextInput(input) => text_input_to_gpui(input, viewport_columns),
         Node::Container(container) => {
             let mut out = div();
             if let Some(bg) = container.style.bg {
@@ -239,6 +237,33 @@ fn node_to_gpui(node: Node, viewport_columns: usize) -> gpui::AnyElement {
             out.into_any_element()
         }
     }
+}
+
+#[cfg(feature = "backend-gpui")]
+fn text_input_to_gpui(input: crate::TextInput, viewport_columns: usize) -> gpui::AnyElement {
+    use gpui::{IntoElement, ParentElement, Styled, div};
+
+    let border = gpui::rgb(0x30363d);
+    div()
+        .flex()
+        .border_1()
+        .border_color(border)
+        .font_family("DejaVu Sans Mono")
+        .child(
+            div()
+                .flex_none()
+                .px_2()
+                .border_r_1()
+                .border_color(border)
+                .text_color(gpui::rgb(0x6e7681))
+                .child(rich_text_to_gpui(
+                    input.to_wrapped_gutter_rich_text(viewport_columns),
+                )),
+        )
+        .child(div().flex_1().px_2().child(rich_text_to_gpui(
+            input.to_wrapped_content_rich_text(viewport_columns),
+        )))
+        .into_any_element()
 }
 
 #[cfg(feature = "backend-gpui")]

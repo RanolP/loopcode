@@ -79,19 +79,94 @@ pub struct TextInput {
 impl TextInput {
     pub fn to_wrapped_rich_text(&self, total_width: usize) -> RichText {
         let line_number_style = TextStyle::new().color(Rgb(0x6e7681));
+        let mut runs = Vec::new();
+        let (gutter_digits, rows) = self.wrapped_rows(total_width.saturating_sub(3));
+
+        for row in rows {
+            if !runs.is_empty() {
+                runs.push(TextRun {
+                    text: "\n".to_string(),
+                    style: TextStyle::default(),
+                });
+            }
+            let prefix = match row.line_number {
+                Some(line) => format!("{:>width$} | ", line, width = gutter_digits),
+                None => format!("{:>width$} | ", "", width = gutter_digits),
+            };
+            runs.push(TextRun {
+                text: prefix,
+                style: line_number_style.clone(),
+            });
+            for (ch, style) in row.content {
+                runs.push(TextRun {
+                    text: ch.to_string(),
+                    style,
+                });
+            }
+        }
+
+        RichText { runs }
+    }
+
+    pub fn to_wrapped_gutter_rich_text(&self, total_width: usize) -> RichText {
+        let line_number_style = TextStyle::new().color(Rgb(0x6e7681));
+        let mut runs = Vec::new();
+        let (gutter_digits, rows) = self.wrapped_rows(total_width.saturating_sub(1));
+
+        for row in rows {
+            if !runs.is_empty() {
+                runs.push(TextRun {
+                    text: "\n".to_string(),
+                    style: TextStyle::default(),
+                });
+            }
+            let text = match row.line_number {
+                Some(line) => format!("{:>width$}", line, width = gutter_digits),
+                None => format!("{:>width$}", "", width = gutter_digits),
+            };
+            runs.push(TextRun {
+                text,
+                style: line_number_style.clone(),
+            });
+        }
+
+        RichText { runs }
+    }
+
+    pub fn to_wrapped_content_rich_text(&self, total_width: usize) -> RichText {
+        let mut runs = Vec::new();
+        let (_, rows) = self.wrapped_rows(total_width.saturating_sub(1));
+        for row in rows {
+            if !runs.is_empty() {
+                runs.push(TextRun {
+                    text: "\n".to_string(),
+                    style: TextStyle::default(),
+                });
+            }
+            for (ch, style) in row.content {
+                runs.push(TextRun {
+                    text: ch.to_string(),
+                    style,
+                });
+            }
+        }
+        RichText { runs }
+    }
+
+    fn wrapped_rows(&self, total_width: usize) -> (usize, Vec<WrappedRow>) {
         let cursor_style = TextStyle::new().bg(Rgb(0x2f81f7)).color(Rgb(0x0d1117));
         let placeholder_style = TextStyle::new().italic().color(Rgb(0x6e7681));
-        let mut runs = Vec::new();
         let lines: Vec<&str> = self.value.split('\n').collect();
         let line_count = lines.len().max(1);
         let gutter_digits = line_count.to_string().len();
-        let content_width = total_width.saturating_sub(gutter_digits + 3).max(1);
+        let content_width = total_width.saturating_sub(gutter_digits).max(1);
         let (cursor_line, cursor_col) = if self.focused {
             cursor_line_col(&self.value, self.cursor)
         } else {
             (0, 0)
         };
 
+        let mut out = Vec::new();
         for (line_idx, line) in lines.iter().enumerate() {
             let mut styled_chars: Vec<(char, TextStyle)> = Vec::new();
             let chars: Vec<char> = line.chars().collect();
@@ -118,42 +193,34 @@ impl TextInput {
                 }
             }
 
-            let wrapped_rows = wrap_styled_chars(&styled_chars, content_width);
-            let rows = if wrapped_rows.is_empty() {
-                vec![Vec::new()]
-            } else {
-                wrapped_rows
-            };
-
-            for (row_idx, row) in rows.into_iter().enumerate() {
-                if !runs.is_empty() {
-                    runs.push(TextRun {
-                        text: "\n".to_string(),
-                        style: TextStyle::default(),
-                    });
-                }
-
-                let prefix = if row_idx == 0 {
-                    format!("{:>width$} | ", line_idx + 1, width = gutter_digits)
-                } else {
-                    format!("{:>width$} | ", "", width = gutter_digits)
-                };
-                runs.push(TextRun {
-                    text: prefix,
-                    style: line_number_style.clone(),
+            let wrapped = wrap_styled_chars(&styled_chars, content_width);
+            if wrapped.is_empty() {
+                out.push(WrappedRow {
+                    line_number: Some(line_idx + 1),
+                    content: Vec::new(),
                 });
+                continue;
+            }
 
-                for (ch, style) in row {
-                    runs.push(TextRun {
-                        text: ch.to_string(),
-                        style,
-                    });
-                }
+            for (row_idx, row) in wrapped.into_iter().enumerate() {
+                out.push(WrappedRow {
+                    line_number: if row_idx == 0 {
+                        Some(line_idx + 1)
+                    } else {
+                        None
+                    },
+                    content: row,
+                });
             }
         }
-
-        RichText { runs }
+        (gutter_digits, out)
     }
+}
+
+#[derive(Clone)]
+struct WrappedRow {
+    line_number: Option<usize>,
+    content: Vec<(char, TextStyle)>,
 }
 
 fn cursor_line_col(value: &str, cursor: usize) -> (usize, usize) {
