@@ -1,0 +1,11 @@
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = ["crates/*"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+xpui = { path = "crates/xpui", features = ["backend-gpui"] }

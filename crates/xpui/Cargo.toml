@@ -1,0 +1,13 @@
+[package]
+name = "xpui"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["backend-cpui"]
+backend-cpui = ["dep:cpui"]
+backend-gpui = ["dep:gpui"]
+
+[dependencies]
+cpui = { path = "../cpui", optional = true }
+gpui = { version = "0.2.2", optional = true }
