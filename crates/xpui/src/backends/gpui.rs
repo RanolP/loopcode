@@ -57,6 +57,7 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
             if let Some(focus) = self.app.focus_state() {
                 focus.ensure_valid(&focus_order);
             }
+            self.app.on_focus_entries(&focus_order);
 
             let mut root = div()
                 .size_full()
@@ -274,7 +275,7 @@ fn text_input_to_gpui(input: crate::TextInput, viewport_columns: usize) -> gpui:
                 .border_color(border)
                 .text_color(gpui::rgb(0x6e7681))
                 .child(rich_text_to_gpui(
-                    input.to_wrapped_gutter_rich_text(viewport_columns),
+                    input.to_wrapped_gutter_with_pipe_rich_text(viewport_columns),
                 )),
         )
         .child(div().flex_1().px_2().child(rich_text_to_gpui(

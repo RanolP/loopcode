@@ -1,6 +1,6 @@
 use crate::Node;
 
-use super::{FocusState, UiInputEvent, WindowSize};
+use super::{FocusEntry, FocusState, UiInputEvent, WindowSize};
 
 pub trait UiApp {
     fn render(&mut self) -> Node;
@@ -12,6 +12,8 @@ pub trait UiApp {
     fn focus_state(&mut self) -> Option<&mut FocusState> {
         None
     }
+
+    fn on_focus_entries(&mut self, _entries: &[FocusEntry]) {}
 }
 
 #[cfg(feature = "backend-cpui")]

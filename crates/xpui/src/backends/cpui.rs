@@ -54,6 +54,7 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
             if let Some(focus) = self.app.focus_state() {
                 focus.ensure_valid(&entries);
             }
+            self.app.on_focus_entries(&entries);
 
             node_to_cpui(node, self.window_size.width.max(1.0) as usize)
         }

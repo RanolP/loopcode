@@ -1,4 +1,5 @@
 use clap::Parser;
+use std::time::{Duration, Instant};
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 use xpui::IntoNode;
@@ -8,10 +9,6 @@ use xpui::IntoNode;
 struct Args {
     #[arg(long, help = "Run with graphics backend (gpui)")]
     graphics: bool,
-}
-
-enum UiCommand {
-    ScrollHistoryToBottom,
 }
 
 #[derive(Clone, Copy)]
@@ -39,19 +36,119 @@ impl AgentMode {
     }
 }
 
-struct DemoApp {
-    window_size: xpui::WindowSize,
+struct ChatState {
+    input: xpui::TextInputState,
+    history: ChatHistory,
+    selected_model: xpui::signal::Signal<String>,
+    history_heights_memo: xpui::signal::Memo<(u64, usize), Vec<u16>>,
+}
+
+impl ChatState {
+    fn new(events: xpui::signal::EventSignal<HistoryEvent>) -> Self {
+        let history = ChatHistory::new(vec![
+            "assistant: 안녕하세요! 무엇을 도와드릴까요?".to_string(),
+            "user: 포커스 트리 네비게이션을 개선하고 싶어요.".to_string(),
+            "assistant: 좋아요. Enter로 하위 진입, Esc로 상위 복귀 모델로 가죠.".to_string(),
+        ], events);
+        history.reset_to_index(history.len().saturating_sub(1));
+
+        Self {
+            input: xpui::TextInputState::default(),
+            history,
+            selected_model: xpui::signal::Signal::from("gpt-4.1".to_string()),
+            history_heights_memo: xpui::signal::Memo::new(),
+        }
+    }
+
+    fn submit_input(&mut self) -> bool {
+        let text = self.input.value().trim();
+        if text.is_empty() {
+            return false;
+        }
+        self.history.append_user(format!("you: {}", text));
+        self.input.set_value("");
+        true
+    }
+}
+
+#[derive(Clone, Copy)]
+enum HistoryEvent {
+    UserAppended,
+    Reset,
+}
+
+pub(crate) struct ChatHistory {
+    messages: xpui::signal::VecSignal<String>,
+    events: xpui::signal::EventSignal<HistoryEvent>,
+}
+
+impl ChatHistory {
+    pub(crate) fn new(initial: Vec<String>, events: xpui::signal::EventSignal<HistoryEvent>) -> Self {
+        Self {
+            messages: xpui::signal::VecSignal::from(initial),
+            events,
+        }
+    }
+
+    pub(crate) fn append_user(&self, message: String) {
+        self.messages.push(message);
+        self.events.emit(HistoryEvent::UserAppended);
+    }
+
+    pub(crate) fn reset_to_index(&self, index: usize) {
+        self.messages.update(|items| {
+            if let Some(keep) = index.checked_add(1)
+                && keep < items.len()
+            {
+                items.truncate(keep);
+            }
+        });
+        self.events.emit(HistoryEvent::Reset);
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.messages.len()
+    }
+
+    pub(crate) fn version(&self) -> u64 {
+        self.messages.version()
+    }
+
+    pub(crate) fn borrow(&self) -> std::cell::Ref<'_, Vec<String>> {
+        self.messages.borrow()
+    }
+}
+
+struct FocusUiState {
     list_binding: xpui::FocusListBinding,
     list: xpui::FocusListState,
     focus: xpui::FocusState,
-    input: xpui::TextInputState,
-    messages: xpui::signal::VecSignal<String>,
-    selected_model: xpui::signal::Signal<String>,
-    history_heights_memo: xpui::signal::Memo<(u64, usize), Vec<u16>>,
-    pending_commands: Vec<UiCommand>,
+}
+
+impl FocusUiState {
+    fn new(initial_heights: Vec<u16>, viewport: u16, gap: u16) -> Self {
+        let list_binding = xpui::FocusListBinding::new(DemoApp::FIRST_ITEM_ID);
+        let list = xpui::FocusListState::new(initial_heights, viewport, gap);
+        let mut focus = xpui::FocusState::default();
+        focus.set_focused(xpui::FocusId(DemoApp::INPUT_ID));
+        Self {
+            list_binding,
+            list,
+            focus,
+        }
+    }
+}
+
+struct DemoApp {
+    window_size: xpui::WindowSize,
+    chat: ChatState,
+    history_events: xpui::signal::EventSignal<HistoryEvent>,
+    nav: FocusUiState,
     is_vscode_terminal: bool,
     current_dir: String,
     mode: AgentMode,
+    cursor_visible: bool,
+    last_cursor_blink_at: Instant,
 }
 
 impl DemoApp {
@@ -62,31 +159,21 @@ impl DemoApp {
     const FIRST_ITEM_ID: u64 = 1000;
 
     fn new() -> Self {
-        let list_binding = xpui::FocusListBinding::new(Self::FIRST_ITEM_ID);
-        let messages = xpui::signal::VecSignal::from(vec![
-            "assistant: 안녕하세요! 무엇을 도와드릴까요?".to_string(),
-            "user: 포커스 트리 네비게이션을 개선하고 싶어요.".to_string(),
-            "assistant: 좋아요. Enter로 하위 진입, Esc로 상위 복귀 모델로 가죠.".to_string(),
-        ]);
-        let heights = messages
+        let history_events = xpui::signal::EventSignal::new();
+        let chat = ChatState::new(history_events.clone());
+        let heights = chat
+            .history
             .borrow()
             .iter()
             .map(|message| Self::wrapped_line_count(&Self::format_history_row(message, false), 78))
             .collect::<Vec<_>>();
-        let list = xpui::FocusListState::new(heights, 8, Self::ITEM_GAP_LINES);
-        let mut focus = xpui::FocusState::default();
-        focus.set_focused(xpui::FocusId(Self::INPUT_ID));
+        let nav = FocusUiState::new(heights, 8, Self::ITEM_GAP_LINES);
 
         Self {
             window_size: xpui::WindowSize::default(),
-            list_binding,
-            list,
-            focus,
-            input: xpui::TextInputState::default(),
-            messages,
-            selected_model: xpui::signal::Signal::from("gpt-4.1".to_string()),
-            history_heights_memo: xpui::signal::Memo::new(),
-            pending_commands: Vec::new(),
+            chat,
+            history_events,
+            nav,
             is_vscode_terminal: std::env::var("TERM_PROGRAM")
                 .map(|v| v.eq_ignore_ascii_case("vscode"))
                 .unwrap_or(false),
@@ -95,31 +182,34 @@ impl DemoApp {
                 .and_then(|p| p.to_str().map(|s| s.to_string()))
                 .unwrap_or_else(|| ".".to_string()),
             mode: AgentMode::Safe,
+            cursor_visible: true,
+            last_cursor_blink_at: Instant::now(),
         }
     }
 
     fn is_input_focused(&self) -> bool {
-        self.focus.is_focused(xpui::FocusId(Self::INPUT_ID))
+        self.nav.focus.is_focused(xpui::FocusId(Self::INPUT_ID))
     }
 
     fn is_input_container_focused(&self) -> bool {
-        self.focus
+        self.nav
+            .focus
             .is_focused(xpui::FocusId(Self::INPUT_CONTAINER_ID))
     }
 
     fn is_scroll_focused(&self) -> bool {
-        self.focus.is_focused(xpui::FocusId(Self::SCROLL_ID))
+        self.nav.focus.is_focused(xpui::FocusId(Self::SCROLL_ID))
     }
 
     fn input_visual_metrics(&self, total_width: usize) -> (u16, u16) {
-        let lines: Vec<&str> = self.input.value().split('\n').collect();
+        let lines: Vec<&str> = self.chat.input.value().split('\n').collect();
         let line_count = lines.len().max(1);
         let gutter_digits = line_count.to_string().len();
         let content_width = total_width.saturating_sub(gutter_digits + 3).max(1);
 
         let mut total_visual = 0u16;
         let mut cursor_visual = 0u16;
-        let mut cursor_left = self.input.cursor();
+        let mut cursor_left = self.chat.input.cursor();
 
         for line in lines {
             let mut wraps = 1u16;
@@ -191,16 +281,6 @@ impl DemoApp {
         lines.max(1)
     }
 
-    fn submit_message(&mut self) {
-        let text = self.input.value().trim();
-        if text.is_empty() {
-            return;
-        }
-        self.messages.push(format!("you: {}", text));
-        self.pending_commands.push(UiCommand::ScrollHistoryToBottom);
-        self.input.set_value("");
-    }
-
     fn bottom_bar_text(
         &self,
         width: usize,
@@ -221,12 +301,12 @@ impl DemoApp {
         } else {
             "Up/Down move item • Enter select item • Esc step out"
         };
-        let usage_mid = if self.focus.quit_armed() {
+        let usage_mid = if self.nav.focus.quit_armed() {
             "Press Ctrl+C again to quit"
         } else {
             "Use arrows / Enter / Esc"
         };
-        let model = format!("Model: {}", self.selected_model.borrow());
+        let model = format!("Model: {}", self.chat.selected_model.borrow());
         let line1 = Self::left_right_line(usage_top, &model, width);
 
         format!("{line1}\n{usage_mid}")
@@ -278,12 +358,13 @@ impl xpui::UiApp for DemoApp {
     }
 
     fn render(&mut self) -> xpui::Node {
-        self.focus.expire_quit_arm();
+        self.nav.focus.expire_quit_arm();
         let wrap_width = (self.window_size.width as usize).saturating_sub(2).max(1);
-        let heights = self.history_heights_memo.get_or_update(
-            (self.messages.version(), wrap_width),
+        let heights = self.chat.history_heights_memo.get_or_update(
+            (self.chat.history.version(), wrap_width),
             || {
-                self.messages
+                self.chat
+                    .history
                     .borrow()
                     .iter()
                     .map(|message| {
@@ -292,13 +373,24 @@ impl xpui::UiApp for DemoApp {
                     .collect::<Vec<_>>()
             },
         );
-        self.list.set_item_heights(heights);
-        self.list_binding
-            .sync_list_from_focus(&self.focus, &mut self.list);
-
-        let focused = self
+        self.nav.list.set_item_heights(heights);
+        self.nav
             .list_binding
-            .focused_index(&self.focus, self.list.item_count());
+            .sync_list_from_focus(&self.nav.focus, &mut self.nav.list);
+
+        let mut should_scroll_to_bottom = false;
+        self.history_events.drain(|event| {
+            if matches!(event, HistoryEvent::UserAppended) {
+                should_scroll_to_bottom = true;
+            }
+        });
+        if should_scroll_to_bottom {
+            let count = self.nav.list.item_count();
+            if count > 0 {
+                self.nav.list.set_focused_index(count - 1);
+            }
+        }
+
         let input_focused = self.is_input_focused();
         let input_container_focused = self.is_input_container_focused();
         let scroll_focused = self.is_scroll_focused();
@@ -311,32 +403,25 @@ impl xpui::UiApp for DemoApp {
             .saturating_sub(input_viewport_lines);
         let terminal_lines = (self.window_size.height as u16).max(1);
         let reserved_without_history = 15u16.saturating_add(input_viewport_lines);
-        let history_viewport_lines = terminal_lines
-            .saturating_sub(reserved_without_history)
-            .max(3);
-        self.list.set_viewport_lines(history_viewport_lines);
-        for command in self.pending_commands.drain(..) {
-            match command {
-                UiCommand::ScrollHistoryToBottom => {
-                    self.list.scroll_to_bottom();
-                    let count = self.list.item_count();
-                    if count > 0 {
-                        let last = count - 1;
-                        self.list.set_focused_index(last);
-                        self.focus.set_focused(self.list_binding.focus_id(last));
-                    }
-                }
-            }
+        let history_viewport_lines = terminal_lines.saturating_sub(reserved_without_history).max(3);
+        self.nav.list.set_viewport_lines(history_viewport_lines);
+        if should_scroll_to_bottom {
+            self.nav.list.scroll_to_bottom();
         }
 
+        let focused = self
+            .nav
+            .list_binding
+            .focused_index(&self.nav.focus, self.nav.list.item_count());
+
         let mut list = xpui::column().gap(Self::ITEM_GAP_LINES as u8);
-        for (i, message) in self.messages.borrow().iter().enumerate() {
+        for (i, message) in self.chat.history.borrow().iter().enumerate() {
             let i = i as u16;
             let is_focused = focused == Some(i);
             let body = Self::format_history_row(message, is_focused);
             list = list.child(
                 xpui::container(xpui::text(body))
-                    .focus(self.list_binding.focus_id(i))
+                    .focus(self.nav.list_binding.focus_id(i))
                     .style(if is_focused {
                         xpui::BoxStyle::default()
                             .bg(xpui::rgb(0x1f2a36))
@@ -356,7 +441,7 @@ impl xpui::UiApp for DemoApp {
                         xpui::scroll_view(list)
                             .focus(xpui::FocusId(Self::SCROLL_ID))
                             .viewport_lines(history_viewport_lines)
-                            .offset_lines(self.list.scroll_offset()),
+                            .offset_lines(self.nav.list.scroll_offset()),
                     )
                     .style(if scroll_focused {
                         xpui::BoxStyle::default()
@@ -369,10 +454,11 @@ impl xpui::UiApp for DemoApp {
                 .child(
                     xpui::container(
                         xpui::scroll_view(
-                            xpui::text_input_from_state(&self.input)
-                                .placeholder("여기에 입력...")
+                            xpui::text_input_from_state(&self.chat.input)
+                                .placeholder("Find and fix issues.")
                                 .focus(xpui::FocusId(Self::INPUT_ID))
                                 .focused(input_focused)
+                                .cursor_visible(input_focused && self.cursor_visible)
                                 .visible_offset_lines(input_offset_lines),
                         )
                         .viewport_lines(input_viewport_lines)
@@ -400,10 +486,8 @@ impl xpui::UiApp for DemoApp {
                     .style(xpui::BoxStyle::default().text_color(xpui::rgb(0xc9d1d9))),
                 )
                 .child(
-                    xpui::container(self.status_bar_node(
-                        self.window_size.width as usize,
-                    ))
-                    .style(xpui::BoxStyle::default().text_color(xpui::rgb(0x8b949e))),
+                    xpui::container(self.status_bar_node(self.window_size.width as usize))
+                        .style(xpui::BoxStyle::default().text_color(xpui::rgb(0x8b949e))),
                 ),
         )
         .style(xpui::BoxStyle::default().text_color(xpui::rgb(0xe6edf3)))
@@ -411,33 +495,58 @@ impl xpui::UiApp for DemoApp {
     }
 
     fn on_input(&mut self, event: xpui::UiInputEvent) {
+        if matches!(event, xpui::UiInputEvent::Tick) {
+            if self.is_input_focused()
+                && self.last_cursor_blink_at.elapsed() >= Duration::from_millis(500)
+            {
+                self.cursor_visible = !self.cursor_visible;
+                self.last_cursor_blink_at = Instant::now();
+            }
+            return;
+        }
+
+        if self.is_input_focused() {
+            self.cursor_visible = true;
+            self.last_cursor_blink_at = Instant::now();
+        }
+
         if matches!(event, xpui::UiInputEvent::Key(xpui::UiKeyInput::ShiftTab)) {
             self.mode = self.mode.cycle();
             return;
         }
 
-        let line_count = self.input.value().split('\n').count().max(1);
+        let line_count = self.chat.input.value().split('\n').count().max(1);
         let gutter_digits = line_count.to_string().len();
         let input_total_width = (self.window_size.width as usize).max(8);
         let input_content_width = input_total_width.saturating_sub(gutter_digits + 3).max(1);
-        self.input.set_soft_wrap_width(Some(input_content_width));
+        self.chat.input.set_soft_wrap_width(Some(input_content_width));
 
         if self.is_input_focused()
             && matches!(event, xpui::UiInputEvent::Key(xpui::UiKeyInput::Submit))
         {
-            self.submit_message();
+            let _ = self.chat.submit_input();
             return;
         }
-        if self.is_input_focused() && self.input.handle_input(event) {
+        if self.is_input_focused() && self.chat.input.handle_input(event) {
             return;
         }
         let _ = self
+            .nav
             .list_binding
-            .handle_input(&mut self.focus, &mut self.list, event);
+            .handle_input(&mut self.nav.focus, &mut self.nav.list, event);
     }
 
     fn focus_state(&mut self) -> Option<&mut xpui::FocusState> {
-        Some(&mut self.focus)
+        Some(&mut self.nav.focus)
+    }
+
+    fn on_focus_entries(&mut self, entries: &[xpui::FocusEntry]) {
+        let _ = self.nav.list_binding.sync_preferred_child_for_parent(
+            &mut self.nav.focus,
+            &self.nav.list,
+            xpui::FocusId(Self::SCROLL_ID),
+            entries,
+        );
     }
 }
 

@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},
     rc::Rc,
+    sync::mpsc::{self, Receiver, Sender},
 };
 
 #[derive(Clone, Debug)]
@@ -109,6 +110,46 @@ pub fn new<T: Default>() -> Signal<T> {
 
 pub fn new_vec<T>() -> VecSignal<T> {
     VecSignal::from(Vec::new())
+}
+
+#[derive(Debug)]
+struct EventSignalInner<T> {
+    tx: Sender<T>,
+    rx: RefCell<Receiver<T>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct EventSignal<T> {
+    inner: Rc<EventSignalInner<T>>,
+}
+
+impl<T> EventSignal<T> {
+    pub fn new() -> Self {
+        let (tx, rx) = mpsc::channel();
+        Self {
+            inner: Rc::new(EventSignalInner {
+                tx,
+                rx: RefCell::new(rx),
+            }),
+        }
+    }
+
+    pub fn emit(&self, event: T) {
+        let _ = self.inner.tx.send(event);
+    }
+
+    pub fn drain(&self, mut on_event: impl FnMut(T)) {
+        let rx = self.inner.rx.borrow_mut();
+        while let Ok(event) = rx.try_recv() {
+            on_event(event);
+        }
+    }
+}
+
+impl<T> Default for EventSignal<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Clone, Debug)]

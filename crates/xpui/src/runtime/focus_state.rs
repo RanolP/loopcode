@@ -191,6 +191,28 @@ impl FocusState {
         true
     }
 
+    pub fn remember_child(
+        &mut self,
+        parent_id: FocusId,
+        child_id: FocusId,
+        entries: &[FocusEntry],
+    ) -> bool {
+        let Some(parent) = entries.iter().find(|entry| entry.id == parent_id) else {
+            return false;
+        };
+        let Some(child) = entries.iter().find(|entry| entry.id == child_id) else {
+            return false;
+        };
+        if child.path.0.len() <= parent.path.0.len()
+            || child.path.0.get(..parent.path.0.len()) != Some(parent.path.0.as_slice())
+        {
+            return false;
+        }
+        self.last_child_by_parent
+            .insert(parent.path.clone(), child.path.clone());
+        true
+    }
+
     pub(crate) fn current_index(&self, entries: &[FocusEntry]) -> Option<usize> {
         if let Some(path) = &self.focused_path
             && let Some(idx) = entries.iter().position(|entry| &entry.path == path)

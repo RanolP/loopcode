@@ -18,6 +18,7 @@ impl TextInputWidget {
                 placeholder: None,
                 cursor,
                 focused: false,
+                cursor_visible: true,
                 visible_offset_lines: 0,
             },
         }
@@ -31,6 +32,7 @@ impl TextInputWidget {
                 placeholder: None,
                 cursor: state.cursor(),
                 focused: false,
+                cursor_visible: true,
                 visible_offset_lines: 0,
             },
         }
@@ -48,6 +50,11 @@ impl TextInputWidget {
 
     pub fn focused(mut self, focused: bool) -> Self {
         self.inner.focused = focused;
+        self
+    }
+
+    pub fn cursor_visible(mut self, visible: bool) -> Self {
+        self.inner.cursor_visible = visible;
         self
     }
 

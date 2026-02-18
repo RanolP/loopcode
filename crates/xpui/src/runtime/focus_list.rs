@@ -1,6 +1,6 @@
 use crate::FocusId;
 
-use super::{FocusState, UiInputEvent, UiKeyInput};
+use super::{FocusEntry, FocusState, UiInputEvent, UiKeyInput};
 
 #[derive(Clone, Debug)]
 pub struct FocusListState {
@@ -84,6 +84,20 @@ impl FocusListBinding {
             focus.set_focused(self.focus_id(list.focused_index()));
         }
         handled
+    }
+
+    pub fn sync_preferred_child_for_parent(
+        &self,
+        focus: &mut FocusState,
+        list: &FocusListState,
+        parent_id: FocusId,
+        entries: &[FocusEntry],
+    ) -> bool {
+        if list.item_count() == 0 {
+            return false;
+        }
+        let child_id = self.focus_id(list.focused_index());
+        focus.remember_child(parent_id, child_id, entries)
     }
 }
 

@@ -15,7 +15,7 @@ use crossterm::{
 use crate::{
     element::AnyElement,
     entity::WindowId,
-    frame::{CellBuffer, CellStyle},
+    frame::{CellBuffer, CellStyle, Glyph},
     geometry::{Bounds, Pixels, Size},
 };
 
@@ -142,6 +142,11 @@ impl Window {
             .filter(|frame| frame.width() == w && frame.height() == h)
             .unwrap_or_else(|| CellBuffer::new(w, h));
         flush_diff(&mut out, &prev, &current)?;
+        if let Some((cx, cy)) = find_text_cursor(&current) {
+            crossterm::queue!(out, cursor::MoveTo(cx, cy), cursor::Show)?;
+        } else {
+            crossterm::queue!(out, cursor::Hide)?;
+        }
         self.prev_frame = Some(current);
         crossterm::queue!(out, EndSynchronizedUpdate)?;
         out.flush()
@@ -156,6 +161,23 @@ fn flush_diff(out: &mut impl io::Write, prev: &CellBuffer, current: &CellBuffer)
     }
 
     style_emitter.reset(out)
+}
+
+fn find_text_cursor(frame: &CellBuffer) -> Option<(u16, u16)> {
+    let cursor_bg = crate::rgb(0x2f81f7);
+    let cursor_fg = crate::rgb(0x0d1117);
+    for y in 0..frame.height() {
+        for x in 0..frame.width() {
+            let cell = frame.get(x, y);
+            if cell.style.bg == Some(cursor_bg)
+                && cell.style.fg == Some(cursor_fg)
+                && matches!(cell.glyph, Glyph::Char(_))
+            {
+                return Some((x, y));
+            }
+        }
+    }
+    None
 }
 
 #[derive(Default)]
