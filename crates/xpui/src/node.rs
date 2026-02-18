@@ -1,4 +1,4 @@
-use crate::style::{BoxStyle, TextStyle};
+use crate::style::{BoxStyle, Rgb, TextStyle};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FocusId(pub u64);
@@ -68,11 +68,143 @@ pub struct TextRun {
 }
 
 #[derive(Clone, Debug)]
+pub struct TextInput {
+    pub focus_id: Option<FocusId>,
+    pub value: String,
+    pub placeholder: Option<String>,
+    pub cursor: usize,
+    pub focused: bool,
+}
+
+impl TextInput {
+    pub fn to_wrapped_rich_text(&self, total_width: usize) -> RichText {
+        let line_number_style = TextStyle::new().color(Rgb(0x6e7681));
+        let cursor_style = TextStyle::new().bg(Rgb(0x2f81f7)).color(Rgb(0x0d1117));
+        let placeholder_style = TextStyle::new().italic().color(Rgb(0x6e7681));
+        let mut runs = Vec::new();
+        let lines: Vec<&str> = self.value.split('\n').collect();
+        let line_count = lines.len().max(1);
+        let gutter_digits = line_count.to_string().len();
+        let content_width = total_width.saturating_sub(gutter_digits + 3).max(1);
+        let (cursor_line, cursor_col) = if self.focused {
+            cursor_line_col(&self.value, self.cursor)
+        } else {
+            (0, 0)
+        };
+
+        for (line_idx, line) in lines.iter().enumerate() {
+            let mut styled_chars: Vec<(char, TextStyle)> = Vec::new();
+            let chars: Vec<char> = line.chars().collect();
+            if self.focused && cursor_line == line_idx {
+                let col = cursor_col.min(chars.len());
+                for ch in &chars[..col] {
+                    styled_chars.push((*ch, TextStyle::default()));
+                }
+                styled_chars.push((chars.get(col).copied().unwrap_or(' '), cursor_style.clone()));
+                if col < chars.len() {
+                    for ch in &chars[col + 1..] {
+                        styled_chars.push((*ch, TextStyle::default()));
+                    }
+                }
+            } else if line.is_empty() && !self.focused && self.value.is_empty() {
+                if let Some(placeholder) = &self.placeholder {
+                    for ch in placeholder.chars() {
+                        styled_chars.push((ch, placeholder_style.clone()));
+                    }
+                }
+            } else {
+                for ch in chars {
+                    styled_chars.push((ch, TextStyle::default()));
+                }
+            }
+
+            let wrapped_rows = wrap_styled_chars(&styled_chars, content_width);
+            let rows = if wrapped_rows.is_empty() {
+                vec![Vec::new()]
+            } else {
+                wrapped_rows
+            };
+
+            for (row_idx, row) in rows.into_iter().enumerate() {
+                if !runs.is_empty() {
+                    runs.push(TextRun {
+                        text: "\n".to_string(),
+                        style: TextStyle::default(),
+                    });
+                }
+
+                let prefix = if row_idx == 0 {
+                    format!("{:>width$} | ", line_idx + 1, width = gutter_digits)
+                } else {
+                    format!("{:>width$} | ", "", width = gutter_digits)
+                };
+                runs.push(TextRun {
+                    text: prefix,
+                    style: line_number_style.clone(),
+                });
+
+                for (ch, style) in row {
+                    runs.push(TextRun {
+                        text: ch.to_string(),
+                        style,
+                    });
+                }
+            }
+        }
+
+        RichText { runs }
+    }
+}
+
+fn cursor_line_col(value: &str, cursor: usize) -> (usize, usize) {
+    let mut line = 0usize;
+    let mut col = 0usize;
+    let mut i = 0usize;
+    for ch in value.chars() {
+        if i == cursor {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+        i += 1;
+    }
+    (line, col)
+}
+
+fn wrap_styled_chars(chars: &[(char, TextStyle)], width: usize) -> Vec<Vec<(char, TextStyle)>> {
+    if width == 0 {
+        return vec![chars.to_vec()];
+    }
+
+    let mut rows: Vec<Vec<(char, TextStyle)>> = Vec::new();
+    let mut row: Vec<(char, TextStyle)> = Vec::new();
+    let mut row_width = 0usize;
+
+    for (ch, style) in chars.iter().cloned() {
+        let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if row_width > 0 && row_width.saturating_add(ch_width) > width {
+            rows.push(std::mem::take(&mut row));
+            row_width = 0;
+        }
+        row.push((ch, style));
+        row_width = row_width.saturating_add(ch_width);
+    }
+
+    rows.push(row);
+    rows
+}
+
+#[derive(Clone, Debug)]
 pub enum Node {
     Stack(Stack),
     Container(Container),
     ScrollView(ScrollView),
     RichText(RichText),
+    TextInput(TextInput),
     Empty,
 }
 
@@ -105,6 +237,11 @@ impl Node {
                     out.push(id);
                 }
                 scroll.child.collect_focus_ids(out);
+            }
+            Node::TextInput(input) => {
+                if let Some(id) = input.focus_id {
+                    out.push(id);
+                }
             }
             Node::RichText(_) | Node::Empty => {}
         }

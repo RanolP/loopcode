@@ -11,3 +11,4 @@ backend-gpui = ["dep:gpui"]
 [dependencies]
 cpui = { path = "../cpui", optional = true }
 gpui = { version = "0.2.2", optional = true }
+unicode-width = "0.2"

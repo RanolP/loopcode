@@ -10,7 +10,8 @@ use std::{
 };
 
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+    MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal;
@@ -67,12 +68,20 @@ pub type SharedString = String;
 pub enum KeyInput {
     Tab,
     BackTab,
+    Left,
+    Right,
+    WordLeft,
+    WordRight,
     Up,
     Down,
     PageUp,
     PageDown,
     Home,
     End,
+    Backspace,
+    BackspaceWord,
+    Delete,
+    Enter,
     Esc,
     Char(char),
 }
@@ -446,19 +455,35 @@ impl Drop for TerminalGuard {
 
 fn map_input_event(event: Event) -> Option<InputEvent> {
     match event {
-        Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-            KeyCode::Tab => Some(InputEvent::Key(KeyInput::Tab)),
-            KeyCode::BackTab => Some(InputEvent::Key(KeyInput::BackTab)),
-            KeyCode::Up => Some(InputEvent::Key(KeyInput::Up)),
-            KeyCode::Down => Some(InputEvent::Key(KeyInput::Down)),
-            KeyCode::PageUp => Some(InputEvent::Key(KeyInput::PageUp)),
-            KeyCode::PageDown => Some(InputEvent::Key(KeyInput::PageDown)),
-            KeyCode::Home => Some(InputEvent::Key(KeyInput::Home)),
-            KeyCode::End => Some(InputEvent::Key(KeyInput::End)),
-            KeyCode::Esc => Some(InputEvent::Key(KeyInput::Esc)),
-            KeyCode::Char(ch) => Some(InputEvent::Key(KeyInput::Char(ch))),
-            _ => None,
-        },
+        Event::Key(key) if key.kind == KeyEventKind::Press => {
+            let secondary = key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER);
+            match key.code {
+                KeyCode::Tab => Some(InputEvent::Key(KeyInput::Tab)),
+                KeyCode::BackTab => Some(InputEvent::Key(KeyInput::BackTab)),
+                KeyCode::Left if secondary => Some(InputEvent::Key(KeyInput::WordLeft)),
+                KeyCode::Right if secondary => Some(InputEvent::Key(KeyInput::WordRight)),
+                KeyCode::Left => Some(InputEvent::Key(KeyInput::Left)),
+                KeyCode::Right => Some(InputEvent::Key(KeyInput::Right)),
+                KeyCode::Up => Some(InputEvent::Key(KeyInput::Up)),
+                KeyCode::Down => Some(InputEvent::Key(KeyInput::Down)),
+                KeyCode::PageUp => Some(InputEvent::Key(KeyInput::PageUp)),
+                KeyCode::PageDown => Some(InputEvent::Key(KeyInput::PageDown)),
+                KeyCode::Home => Some(InputEvent::Key(KeyInput::Home)),
+                KeyCode::End => Some(InputEvent::Key(KeyInput::End)),
+                KeyCode::Backspace if secondary => Some(InputEvent::Key(KeyInput::BackspaceWord)),
+                KeyCode::Backspace => Some(InputEvent::Key(KeyInput::Backspace)),
+                KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Some(InputEvent::Key(KeyInput::BackspaceWord))
+                }
+                KeyCode::Delete => Some(InputEvent::Key(KeyInput::Delete)),
+                KeyCode::Enter => Some(InputEvent::Key(KeyInput::Enter)),
+                KeyCode::Esc => Some(InputEvent::Key(KeyInput::Esc)),
+                KeyCode::Char(ch) => Some(InputEvent::Key(KeyInput::Char(ch))),
+                _ => None,
+            }
+        }
         Event::Mouse(mouse) => match mouse.kind {
             MouseEventKind::ScrollUp => Some(InputEvent::ScrollLines(-3)),
             MouseEventKind::ScrollDown => Some(InputEvent::ScrollLines(3)),

@@ -8,6 +8,7 @@ use crossterm::{
         SetForegroundColor,
     },
 };
+use unicode_width::UnicodeWidthChar;
 
 use crate::color::Rgba;
 use crate::element::Rect;
@@ -116,7 +117,8 @@ impl StyledText {
                     max_width = max_width.max(line_width);
                     line_width = 0;
                 } else {
-                    line_width = line_width.saturating_add(1);
+                    line_width =
+                        line_width.saturating_add(UnicodeWidthChar::width(ch).unwrap_or(0));
                 }
             }
         }
@@ -132,6 +134,38 @@ impl StyledText {
         lines
     }
 
+    pub(crate) fn wrapped_width_chars(&self, max_width: usize) -> usize {
+        if max_width == 0 {
+            return self.width_chars();
+        }
+        self.width_chars().min(max_width)
+    }
+
+    pub(crate) fn wrapped_height_lines(&self, max_width: usize) -> usize {
+        if max_width == 0 {
+            return self.height_lines();
+        }
+
+        let mut lines = 1usize;
+        let mut line_width = 0usize;
+        for run in &self.runs {
+            for ch in run.text.chars() {
+                if ch == '\n' {
+                    lines = lines.saturating_add(1);
+                    line_width = 0;
+                    continue;
+                }
+                let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+                if line_width > 0 && line_width.saturating_add(ch_width) > max_width {
+                    lines = lines.saturating_add(1);
+                    line_width = 0;
+                }
+                line_width = line_width.saturating_add(ch_width);
+            }
+        }
+        lines
+    }
+
     pub(crate) fn render_at_clipped(
         &self,
         out: &mut impl io::Write,
@@ -142,6 +176,7 @@ impl StyledText {
     ) -> io::Result<()> {
         let mut cursor_x = 0i32;
         let mut cursor_y = 0i32;
+        let wrap_width = (clip.right - x).max(0);
 
         for run in &self.runs {
             execute!(out, SetAttribute(Attribute::Reset))?;
@@ -186,6 +221,12 @@ impl StyledText {
                     continue;
                 }
 
+                let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
+                if wrap_width > 0 && cursor_x > 0 && cursor_x.saturating_add(ch_width) > wrap_width
+                {
+                    cursor_y = cursor_y.saturating_add(1);
+                    cursor_x = 0;
+                }
                 let draw_x = x.saturating_add(cursor_x);
                 let draw_y = y.saturating_add(cursor_y);
                 if draw_x >= clip.left
@@ -195,7 +236,7 @@ impl StyledText {
                 {
                     execute!(out, MoveTo(draw_x as u16, draw_y as u16), Print(ch))?;
                 }
-                cursor_x = cursor_x.saturating_add(1);
+                cursor_x = cursor_x.saturating_add(ch_width);
             }
             execute!(out, SetAttribute(Attribute::Reset), ResetColor)?;
         }

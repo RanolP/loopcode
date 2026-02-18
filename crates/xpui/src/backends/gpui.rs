@@ -40,6 +40,7 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
         focus_order: Vec<crate::FocusId>,
         root_focus: gpui::FocusHandle,
         wheel_line_carry: f32,
+        window_size: WindowSize,
     }
 
     impl<A: UiApp + 'static> Render for Host<A> {
@@ -47,6 +48,7 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
             use gpui::{InteractiveElement, ParentElement, Styled, div, px};
 
             window.focus(&self.root_focus);
+            self.app.set_window_size(self.window_size);
 
             let node = self.app.render();
             let mut focus_order = Vec::new();
@@ -107,10 +109,18 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
                     if let Some(text_color) = container.style.text_color {
                         root = root.text_color(gpui::rgb(text_color.0));
                     }
-                    root.child(node_to_gpui(*container.child))
-                        .into_any_element()
+                    root.child(node_to_gpui(
+                        *container.child,
+                        self.window_size.width.max(1.0) as usize,
+                    ))
+                    .into_any_element()
                 }
-                other => root.child(node_to_gpui(other)).into_any_element(),
+                other => root
+                    .child(node_to_gpui(
+                        other,
+                        self.window_size.width.max(1.0) as usize,
+                    ))
+                    .into_any_element(),
             }
         }
     }
@@ -122,6 +132,7 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
                 focus_order: Vec::new(),
                 root_focus: cx.focus_handle(),
                 wheel_line_carry: 0.0,
+                window_size: _size,
             })
         });
         cx.activate(true);
@@ -136,13 +147,25 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
 
 #[cfg(feature = "backend-gpui")]
 fn map_gpui_key_event(event: &gpui::KeyDownEvent) -> Option<UiKeyInput> {
+    let secondary = event.keystroke.modifiers.secondary();
+    if secondary && matches!(event.keystroke.key_char.as_deref(), Some("w")) {
+        return Some(UiKeyInput::BackspaceWord);
+    }
     match event.keystroke.key.as_str() {
+        "left" if secondary => Some(UiKeyInput::WordLeft),
+        "right" if secondary => Some(UiKeyInput::WordRight),
+        "backspace" if secondary => Some(UiKeyInput::BackspaceWord),
+        "left" => Some(UiKeyInput::Left),
+        "right" => Some(UiKeyInput::Right),
         "up" => Some(UiKeyInput::Up),
         "down" => Some(UiKeyInput::Down),
         "pageup" => Some(UiKeyInput::PageUp),
         "pagedown" => Some(UiKeyInput::PageDown),
         "home" => Some(UiKeyInput::Home),
         "end" => Some(UiKeyInput::End),
+        "backspace" => Some(UiKeyInput::Backspace),
+        "delete" => Some(UiKeyInput::Delete),
+        "enter" => Some(UiKeyInput::Enter),
         "escape" => Some(UiKeyInput::Esc),
         _ => {
             let text = event
@@ -160,12 +183,15 @@ fn map_gpui_key_event(event: &gpui::KeyDownEvent) -> Option<UiKeyInput> {
 }
 
 #[cfg(feature = "backend-gpui")]
-fn node_to_gpui(node: Node) -> gpui::AnyElement {
+fn node_to_gpui(node: Node, viewport_columns: usize) -> gpui::AnyElement {
     use gpui::{IntoElement, ParentElement, Styled, div};
 
     match node {
         Node::Empty => div().into_any_element(),
         Node::RichText(text) => rich_text_to_gpui(text).into_any_element(),
+        Node::TextInput(input) => {
+            rich_text_to_gpui(input.to_wrapped_rich_text(viewport_columns)).into_any_element()
+        }
         Node::Container(container) => {
             let mut out = div();
             if let Some(bg) = container.style.bg {
@@ -174,7 +200,8 @@ fn node_to_gpui(node: Node) -> gpui::AnyElement {
             if let Some(text_color) = container.style.text_color {
                 out = out.text_color(gpui::rgb(text_color.0));
             }
-            out.child(node_to_gpui(*container.child)).into_any_element()
+            out.child(node_to_gpui(*container.child, viewport_columns))
+                .into_any_element()
         }
         Node::ScrollView(scroll) => {
             const LINE_HEIGHT_PX: f32 = 18.0;
@@ -185,7 +212,10 @@ fn node_to_gpui(node: Node) -> gpui::AnyElement {
                 out = out.h(gpui::px(lines as f32 * LINE_HEIGHT_PX));
             }
 
-            let mut inner = div().relative().w_full().child(node_to_gpui(*scroll.child));
+            let mut inner = div()
+                .relative()
+                .w_full()
+                .child(node_to_gpui(*scroll.child, viewport_columns));
             if scroll.offset_lines > 0 {
                 inner = inner.top(gpui::px(-(scroll.offset_lines as f32 * LINE_HEIGHT_PX)));
             }
@@ -204,7 +234,7 @@ fn node_to_gpui(node: Node) -> gpui::AnyElement {
                 out = out.items_center();
             }
             for child in stack.children {
-                out = out.child(node_to_gpui(child));
+                out = out.child(node_to_gpui(child, viewport_columns));
             }
             out.into_any_element()
         }

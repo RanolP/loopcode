@@ -311,6 +311,7 @@ fn taffy_style_from(div: &Div) -> taffy::style::Style {
 fn build_layout_tree(
     taffy: &mut TaffyTree<()>,
     element: &AnyElement,
+    wrap_width: usize,
     inherited_color: Option<Rgba>,
     leaves: &mut Vec<TextLeaf>,
     parents: &mut HashMap<NodeId, NodeId>,
@@ -326,8 +327,8 @@ fn build_layout_tree(
                 flex_grow: 0.0,
                 flex_shrink: 0.0,
                 size: Size {
-                    width: Dimension::Length(inline.width_chars() as f32),
-                    height: Dimension::Length(inline.height_lines() as f32),
+                    width: Dimension::Length(inline.wrapped_width_chars(wrap_width) as f32),
+                    height: Dimension::Length(inline.wrapped_height_lines(wrap_width) as f32),
                 },
                 ..Default::default()
             };
@@ -344,8 +345,8 @@ fn build_layout_tree(
                 flex_grow: 0.0,
                 flex_shrink: 0.0,
                 size: Size {
-                    width: Dimension::Length(inline.width_chars() as f32),
-                    height: Dimension::Length(inline.height_lines() as f32),
+                    width: Dimension::Length(inline.wrapped_width_chars(wrap_width) as f32),
+                    height: Dimension::Length(inline.wrapped_height_lines(wrap_width) as f32),
                 },
                 ..Default::default()
             };
@@ -364,6 +365,7 @@ fn build_layout_tree(
                 child_nodes.push(build_layout_tree(
                     taffy,
                     child,
+                    wrap_width,
                     child_color,
                     leaves,
                     parents,
@@ -382,6 +384,7 @@ fn build_layout_tree(
             let child = build_layout_tree(
                 taffy,
                 &scroll.child,
+                wrap_width,
                 inherited_color,
                 leaves,
                 parents,
@@ -432,6 +435,7 @@ pub(crate) fn render_element(
     let root = build_layout_tree(
         &mut taffy,
         element,
+        terminal_width as usize,
         None,
         &mut leaves,
         &mut parents,
@@ -534,6 +538,7 @@ mod tests {
         let root = build_layout_tree(
             &mut taffy,
             element,
+            width as usize,
             None,
             &mut leaves,
             &mut parents,

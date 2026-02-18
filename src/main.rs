@@ -11,9 +11,11 @@ struct Args {
 struct DemoApp {
     list: xpui::FocusListState,
     focus: xpui::FocusState,
+    input: xpui::TextInputState,
 }
 
 impl DemoApp {
+    const INPUT_ID: u64 = 1;
     const ITEM_GAP_LINES: u16 = 1;
     const FIRST_ITEM_ID: u64 = 1000;
 
@@ -25,8 +27,13 @@ impl DemoApp {
 
         let list = xpui::FocusListState::new(heights, 8, Self::ITEM_GAP_LINES);
         let mut focus = xpui::FocusState::default();
-        focus.set_focused(Self::item_focus_id(0));
-        Self { list, focus }
+        focus.set_focused(xpui::FocusId(Self::INPUT_ID));
+
+        Self {
+            list,
+            focus,
+            input: xpui::TextInputState::default(),
+        }
     }
 
     fn item_focus_id(index: u16) -> xpui::FocusId {
@@ -41,6 +48,10 @@ impl DemoApp {
         } else {
             None
         }
+    }
+
+    fn is_input_focused(&self) -> bool {
+        self.focus.focused() == Some(xpui::FocusId(Self::INPUT_ID))
     }
 
     fn item_line_height(index: u16) -> u16 {
@@ -62,6 +73,7 @@ impl xpui::UiApp for DemoApp {
 
         let max_offset = self.list.max_scroll_offset();
         let focused = Some(self.list.focused_index());
+        let input_focused = self.is_input_focused();
 
         let mut list = xpui::column().gap(Self::ITEM_GAP_LINES as u8);
         for i in 0..self.list.item_count() {
@@ -96,13 +108,32 @@ impl xpui::UiApp for DemoApp {
             xpui::column()
                 .gap(2)
                 .child(
-                    xpui::text("Focusable items in scrollview")
+                    xpui::text("Focusable text input + scrollview")
                         .run(" (terminal-first)", xpui::TextStyle::new().bold()),
                 )
+                .child(xpui::text(
+                    "Tab/Shift+Tab focus, arrows/PgUp/PgDn/Home/End on list, Esc to quit.",
+                ))
                 .child(xpui::text(format!(
-                    "Tab/Shift+Tab or ↑/↓/PgUp/PgDn/Home/End/wheel. Active={:?} (multiline rows)",
-                    self.focus.focused()
+                    "Input value: {:?} (cursor={})",
+                    self.input.value(),
+                    self.input.cursor()
                 )))
+                .child(
+                    xpui::container(
+                        xpui::text_input_from_state(&self.input)
+                            .placeholder("여기에 입력...")
+                            .focus(xpui::FocusId(Self::INPUT_ID))
+                            .focused(input_focused),
+                    )
+                    .style(if input_focused {
+                        xpui::BoxStyle::default()
+                            .bg(xpui::rgb(0x1f2a36))
+                            .text_color(xpui::rgb(0xb3e3ff))
+                    } else {
+                        xpui::BoxStyle::default()
+                    }),
+                )
                 .child(xpui::text(format!(
                     "Scroll offset={}/{} (viewport={})",
                     self.list.scroll_offset(),
@@ -124,35 +155,41 @@ impl xpui::UiApp for DemoApp {
     }
 
     fn on_input(&mut self, event: xpui::UiInputEvent) {
+        if self.is_input_focused() && self.input.handle_input(event) {
+            return;
+        }
+
         if let Some(index) = self.focused_index() {
             self.list.set_focused_index(index);
-        }
 
-        match event {
-            xpui::UiInputEvent::Key(xpui::UiKeyInput::Up) => self.list.move_focus_by(-1),
-            xpui::UiInputEvent::Key(xpui::UiKeyInput::Down) => self.list.move_focus_by(1),
-            xpui::UiInputEvent::Key(xpui::UiKeyInput::PageUp) => self
-                .list
-                .move_focus_by(-(self.list.viewport_lines() as i16)),
-            xpui::UiInputEvent::Key(xpui::UiKeyInput::PageDown) => {
-                self.list.move_focus_by(self.list.viewport_lines() as i16)
+            match event {
+                xpui::UiInputEvent::Key(xpui::UiKeyInput::Up) => self.list.move_focus_by(-1),
+                xpui::UiInputEvent::Key(xpui::UiKeyInput::Down) => self.list.move_focus_by(1),
+                xpui::UiInputEvent::Key(xpui::UiKeyInput::PageUp) => self
+                    .list
+                    .move_focus_by(-(self.list.viewport_lines() as i16)),
+                xpui::UiInputEvent::Key(xpui::UiKeyInput::PageDown) => {
+                    self.list.move_focus_by(self.list.viewport_lines() as i16)
+                }
+                xpui::UiInputEvent::Key(xpui::UiKeyInput::Home) => self.list.set_focused_index(0),
+                xpui::UiInputEvent::Key(xpui::UiKeyInput::End) => self
+                    .list
+                    .set_focused_index(self.list.item_count().saturating_sub(1)),
+                xpui::UiInputEvent::Key(xpui::UiKeyInput::Tab | xpui::UiKeyInput::BackTab) => {
+                    self.list.ensure_focused_visible()
+                }
+                xpui::UiInputEvent::ScrollLines(lines) if lines < 0 => {
+                    self.list.move_focus_by(-(lines.unsigned_abs() as i16))
+                }
+                xpui::UiInputEvent::ScrollLines(lines) if lines > 0 => {
+                    self.list.move_focus_by(lines)
+                }
+                _ => {}
             }
-            xpui::UiInputEvent::Key(xpui::UiKeyInput::Home) => self.list.set_focused_index(0),
-            xpui::UiInputEvent::Key(xpui::UiKeyInput::End) => self
-                .list
-                .set_focused_index(self.list.item_count().saturating_sub(1)),
-            xpui::UiInputEvent::Key(xpui::UiKeyInput::Tab | xpui::UiKeyInput::BackTab) => {
-                self.list.ensure_focused_visible()
-            }
-            xpui::UiInputEvent::ScrollLines(lines) if lines < 0 => {
-                self.list.move_focus_by(-(lines.unsigned_abs() as i16))
-            }
-            xpui::UiInputEvent::ScrollLines(lines) if lines > 0 => self.list.move_focus_by(lines),
-            _ => {}
-        }
 
-        self.focus
-            .set_focused(Self::item_focus_id(self.list.focused_index()));
+            self.focus
+                .set_focused(Self::item_focus_id(self.list.focused_index()));
+        }
     }
 
     fn focus_state(&mut self) -> Option<&mut xpui::FocusState> {

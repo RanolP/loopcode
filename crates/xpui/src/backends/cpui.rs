@@ -2,7 +2,7 @@ use cpui::{AppContext, IntoElement};
 
 use crate::{
     backend::Backend,
-    node::{Axis, Node, RichText},
+    node::{Axis, Node, RichText, TextInput},
     runtime::{UiApp, UiInputEvent, UiKeyInput, WindowSize},
     style::{Rgb, TextStyle},
 };
@@ -13,7 +13,7 @@ impl Backend for CpuiBackend {
     type Output = cpui::AnyElement;
 
     fn render_node(&mut self, node: Node) -> Self::Output {
-        node_to_cpui(node)
+        node_to_cpui(node, 80)
     }
 }
 
@@ -29,6 +29,7 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
     struct Host<A> {
         app: A,
         focus_order: Vec<crate::FocusId>,
+        window_size: WindowSize,
     }
 
     impl<A: UiApp + 'static> cpui::Render for Host<A> {
@@ -37,7 +38,7 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
             _window: &mut cpui::Window,
             _cx: &mut cpui::Context<'_, Self>,
         ) -> impl cpui::IntoElement {
-            let mut backend = CpuiBackend;
+            self.app.set_window_size(self.window_size);
             let node = self.app.render();
 
             let mut order = Vec::new();
@@ -48,7 +49,7 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
                 focus.ensure_valid(&order);
             }
 
-            crate::render(&mut backend, node)
+            node_to_cpui(node, self.window_size.width.max(1.0) as usize)
         }
     }
 
@@ -69,6 +70,7 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
                     let entity = cx.new(|_cx| Host {
                         app,
                         focus_order: Vec::new(),
+                        window_size: size,
                     });
                     cx.set_global(HostEntity(entity.clone()));
                     entity
@@ -78,11 +80,7 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
             cx.activate(true);
         },
         move |cx: &mut cpui::App, event| {
-            if matches!(
-                event,
-                cpui::InputEvent::Key(cpui::KeyInput::Char('q'))
-                    | cpui::InputEvent::Key(cpui::KeyInput::Esc)
-            ) {
+            if matches!(event, cpui::InputEvent::Key(cpui::KeyInput::Esc)) {
                 return true;
             }
 
@@ -120,10 +118,11 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
     );
 }
 
-fn node_to_cpui(node: Node) -> cpui::AnyElement {
+fn node_to_cpui(node: Node, viewport_columns: usize) -> cpui::AnyElement {
     match node {
         Node::Empty => cpui::AnyElement::Empty,
         Node::RichText(text) => text_to_cpui(text).into_any_element(),
+        Node::TextInput(input) => text_input_to_cpui(input, viewport_columns),
         Node::Container(container) => {
             let mut out = cpui::div();
             if let Some(bg) = container.style.bg {
@@ -132,11 +131,12 @@ fn node_to_cpui(node: Node) -> cpui::AnyElement {
             if let Some(text_color) = container.style.text_color {
                 out = out.text_color(to_cpui_color(text_color));
             }
-            out.child(node_to_cpui(*container.child)).into_any_element()
+            out.child(node_to_cpui(*container.child, viewport_columns))
+                .into_any_element()
         }
         Node::ScrollView(scroll) => {
-            let mut out =
-                cpui::scroll_view(node_to_cpui(*scroll.child)).offset_lines(scroll.offset_lines);
+            let mut out = cpui::scroll_view(node_to_cpui(*scroll.child, viewport_columns))
+                .offset_lines(scroll.offset_lines);
             if let Some(lines) = scroll.viewport_lines {
                 out = out.viewport_lines(lines);
             }
@@ -162,12 +162,16 @@ fn node_to_cpui(node: Node) -> cpui::AnyElement {
             };
 
             for child in stack.children {
-                out = out.child(node_to_cpui(child));
+                out = out.child(node_to_cpui(child, viewport_columns));
             }
 
             out.into_any_element()
         }
     }
+}
+
+fn text_input_to_cpui(input: TextInput, viewport_columns: usize) -> cpui::AnyElement {
+    text_to_cpui(input.to_wrapped_rich_text(viewport_columns)).into_any_element()
 }
 
 fn text_to_cpui(text: RichText) -> cpui::StyledText {
@@ -215,12 +219,20 @@ fn from_cpui_input(event: cpui::InputEvent) -> Option<UiInputEvent> {
             let mapped = match key {
                 cpui::KeyInput::Tab => UiKeyInput::Tab,
                 cpui::KeyInput::BackTab => UiKeyInput::BackTab,
+                cpui::KeyInput::Left => UiKeyInput::Left,
+                cpui::KeyInput::Right => UiKeyInput::Right,
+                cpui::KeyInput::WordLeft => UiKeyInput::WordLeft,
+                cpui::KeyInput::WordRight => UiKeyInput::WordRight,
                 cpui::KeyInput::Up => UiKeyInput::Up,
                 cpui::KeyInput::Down => UiKeyInput::Down,
                 cpui::KeyInput::PageUp => UiKeyInput::PageUp,
                 cpui::KeyInput::PageDown => UiKeyInput::PageDown,
                 cpui::KeyInput::Home => UiKeyInput::Home,
                 cpui::KeyInput::End => UiKeyInput::End,
+                cpui::KeyInput::Backspace => UiKeyInput::Backspace,
+                cpui::KeyInput::BackspaceWord => UiKeyInput::BackspaceWord,
+                cpui::KeyInput::Delete => UiKeyInput::Delete,
+                cpui::KeyInput::Enter => UiKeyInput::Enter,
                 cpui::KeyInput::Esc => UiKeyInput::Esc,
                 cpui::KeyInput::Char(ch) => UiKeyInput::Char(ch),
             };
