@@ -2,47 +2,27 @@ use std::{
     any::{Any, TypeId},
     cell::RefCell,
     collections::HashMap,
-    io::{self, Write},
+    io,
     marker::PhantomData,
     rc::Rc,
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
-    time::Duration,
+    sync::atomic::{AtomicU64, Ordering},
 };
-
-use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
-    KeyboardEnhancementFlags, MouseEventKind, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
-};
-use crossterm::execute;
-use crossterm::style::ResetColor;
-use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::{cursor, terminal::Clear, terminal::ClearType};
 
 use crate::{
     context::{AppContext, Context, Focusable, Global, GpuiBorrow, Reservation, VisualContext},
     element::IntoElement,
     entity::{AnyEntity, AnyView, Entity, EntityId, WindowId},
     geometry::{Bounds, Pixels, Point, Size},
+    runtime::{event_loop::run_event_loop, lifecycle::enter_terminal},
     view::Render,
     window::{AnyWindowHandle, Window, WindowHandle, WindowOptions},
 };
 
 static NEXT_ENTITY_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_WINDOW_ID: AtomicU64 = AtomicU64::new(1);
-static ALT_SCREEN_ACTIVE: AtomicBool = AtomicBool::new(false);
-const KEYBOARD_FLAGS: KeyboardEnhancementFlags =
-    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-        .union(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
-        .union(KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS)
-        .union(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES);
 
 trait WindowRenderer {
     fn render(&self, app: &mut App, window: &mut Window) -> io::Result<()>;
-}
-
-pub(crate) fn is_alt_screen_active() -> bool {
-    ALT_SCREEN_ACTIVE.load(Ordering::Relaxed)
 }
 
 struct ViewRenderer<V: 'static + Render> {
@@ -105,23 +85,13 @@ pub enum KeyInput {
 pub enum InputEvent {
     Key(KeyInput),
     ScrollLines(i16),
-    AltScreenActive,
 }
 
+#[derive(Default)]
 pub struct App {
     windows: HashMap<WindowId, WindowState>,
     active_window: Option<WindowId>,
     globals: HashMap<TypeId, Box<dyn Any>>,
-}
-
-impl Default for App {
-    fn default() -> Self {
-        Self {
-            windows: HashMap::new(),
-            active_window: None,
-            globals: HashMap::new(),
-        }
-    }
 }
 
 impl App {
@@ -138,7 +108,7 @@ impl App {
             id,
             WindowState {
                 window,
-                root: root.clone().into_any(),
+                root: root.clone().as_any(),
                 renderer: Box::new(ViewRenderer { root: root.clone() }),
             },
         );
@@ -150,11 +120,11 @@ impl App {
 
     pub fn activate(&self, _ignoring_other_apps: bool) {}
 
-    pub fn new<T: 'static>(
+    pub fn create_entity<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Entity<T> {
-        <Self as AppContext>::new(self, build_entity)
+        <Self as AppContext>::create_entity(self, build_entity)
     }
 
     pub fn set_global<T: Global>(&mut self, value: T) {
@@ -174,6 +144,9 @@ impl App {
     }
 
     fn render_window(&mut self, window_id: WindowId) -> Result<()> {
+        if !crate::runtime::lifecycle::is_alt_screen_active() {
+            return Ok(());
+        }
         let mut state = self
             .windows
             .remove(&window_id)
@@ -196,7 +169,7 @@ impl Bounds {
 impl AppContext for App {
     type Result<T> = T;
 
-    fn new<T: 'static>(
+    fn create_entity<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>> {
@@ -323,7 +296,7 @@ impl VisualContext for App {
         let active = self.active_window.unwrap_or(WindowId(0));
         let mut state = self.windows.remove(&active).unwrap_or_else(|| WindowState {
             window: Window::new(active, WindowOptions::default()),
-            root: entity.clone().into_any(),
+            root: entity.clone().as_any(),
             renderer: Box::new(NoopRenderer),
         });
 
@@ -377,7 +350,7 @@ impl VisualContext for App {
             inner: Rc::new(RefCell::new(value)),
         };
 
-        state.root = entity.clone().into_any();
+        state.root = entity.clone().as_any();
         state.renderer = Box::new(ViewRenderer {
             root: entity.clone(),
         });
@@ -390,6 +363,12 @@ impl VisualContext for App {
 
 pub struct Application {
     headless: bool,
+}
+
+impl Default for Application {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Application {
@@ -424,24 +403,13 @@ impl Application {
             return;
         }
 
-        if let Err(err) = terminal::enable_raw_mode() {
-            eprintln!("cpui raw mode error: {err}");
-            return;
-        }
-        if let Err(err) = execute!(
-            io::stdout(),
-            EnterAlternateScreen,
-            Clear(ClearType::All),
-            cursor::MoveTo(0, 0),
-            EnableMouseCapture
-        ) {
-            eprintln!("cpui mouse capture error: {err}");
-            let _ = terminal::disable_raw_mode();
-            return;
-        }
-        ALT_SCREEN_ACTIVE.store(true, Ordering::Relaxed);
-        let _ = execute!(io::stdout(), PushKeyboardEnhancementFlags(KEYBOARD_FLAGS));
-        let terminal_guard = TerminalGuard;
+        let terminal_guard = match enter_terminal() {
+            Ok(guard) => guard,
+            Err(err) => {
+                eprintln!("cpui terminal init error: {err}");
+                return;
+            }
+        };
         let mut app = App::default();
         on_finish_launching(&mut app);
 
@@ -450,96 +418,10 @@ impl Application {
             return;
         }
 
-        loop {
-            if let Ok(true) = event::poll(Duration::from_millis(250)) {
-                if let Ok(raw) = event::read() {
-                    if matches!(raw, Event::Resize(_, _)) {
-                        if let Err(err) = app.render_all_windows() {
-                            eprintln!("cpui render error: {err}");
-                            break;
-                        }
-                        continue;
-                    }
-                    if let Some(input) = map_input_event(raw) {
-                        if on_input(&mut app, input) {
-                            break;
-                        }
-
-                        if let Err(err) = app.render_all_windows() {
-                            eprintln!("cpui render error: {err}");
-                            break;
-                        }
-                    }
-                }
-            }
+        if let Err(err) = run_event_loop(&mut app, &mut on_input) {
+            eprintln!("cpui runtime loop error: {err}");
         }
 
         drop(terminal_guard);
-    }
-}
-
-struct TerminalGuard;
-
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
-        let mut out = io::stdout();
-        let _ = terminal::disable_raw_mode();
-        let _ = execute!(
-            out,
-            DisableMouseCapture,
-            PopKeyboardEnhancementFlags,
-            ResetColor,
-            cursor::Show
-        );
-        let _ = execute!(out, LeaveAlternateScreen);
-        ALT_SCREEN_ACTIVE.store(false, Ordering::Relaxed);
-        let _ = out.flush();
-    }
-}
-
-fn map_input_event(event: Event) -> Option<InputEvent> {
-    match event {
-        Event::Key(key) if key.kind == KeyEventKind::Press => {
-            let word_modifier = key
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER);
-            let submit_modifier = key.modifiers.contains(KeyModifiers::ALT);
-            match key.code {
-                KeyCode::Tab => Some(InputEvent::Key(KeyInput::Tab)),
-                KeyCode::BackTab => Some(InputEvent::Key(KeyInput::BackTab)),
-                KeyCode::Left if word_modifier => Some(InputEvent::Key(KeyInput::WordLeft)),
-                KeyCode::Right if word_modifier => Some(InputEvent::Key(KeyInput::WordRight)),
-                KeyCode::Left => Some(InputEvent::Key(KeyInput::Left)),
-                KeyCode::Right => Some(InputEvent::Key(KeyInput::Right)),
-                KeyCode::Up => Some(InputEvent::Key(KeyInput::Up)),
-                KeyCode::Down => Some(InputEvent::Key(KeyInput::Down)),
-                KeyCode::PageUp => Some(InputEvent::Key(KeyInput::PageUp)),
-                KeyCode::PageDown => Some(InputEvent::Key(KeyInput::PageDown)),
-                KeyCode::Home => Some(InputEvent::Key(KeyInput::Home)),
-                KeyCode::End => Some(InputEvent::Key(KeyInput::End)),
-                KeyCode::Backspace if word_modifier => {
-                    Some(InputEvent::Key(KeyInput::BackspaceWord))
-                }
-                KeyCode::Backspace => Some(InputEvent::Key(KeyInput::Backspace)),
-                KeyCode::Char('w' | 'W') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    Some(InputEvent::Key(KeyInput::BackspaceWord))
-                }
-                KeyCode::Delete => Some(InputEvent::Key(KeyInput::Delete)),
-                KeyCode::Enter if submit_modifier => Some(InputEvent::Key(KeyInput::Submit)),
-                KeyCode::Enter => Some(InputEvent::Key(KeyInput::Enter)),
-                KeyCode::Char('c' | 'C') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    Some(InputEvent::Key(KeyInput::Interrupt))
-                }
-                KeyCode::Esc => Some(InputEvent::Key(KeyInput::Esc)),
-                KeyCode::Char(ch) => Some(InputEvent::Key(KeyInput::Char(ch))),
-                _ => None,
-            }
-        }
-        Event::Mouse(mouse) => match mouse.kind {
-            MouseEventKind::ScrollUp => Some(InputEvent::ScrollLines(-3)),
-            MouseEventKind::ScrollDown => Some(InputEvent::ScrollLines(3)),
-            _ => None,
-        },
-        _ => None,
     }
 }

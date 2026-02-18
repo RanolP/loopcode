@@ -73,7 +73,7 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
                     ..cpui::WindowOptions::default()
                 },
                 |_window, cx| {
-                    let entity = cx.new(|_cx| Host {
+                    let entity = cx.create_entity(|_cx| Host {
                         app,
                         focus_order: Vec::new(),
                         window_size: size,
@@ -91,7 +91,7 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
             };
 
             let mut should_quit = false;
-            let _ = cx.update_entity(&host_entity, |host, _| {
+            cx.update_entity(&host_entity, |host, _| {
                 let Some(event) = from_cpui_input(event) else {
                     return;
                 };
@@ -237,6 +237,5 @@ fn from_cpui_input(event: cpui::InputEvent) -> Option<UiInputEvent> {
             Some(UiInputEvent::Key(mapped))
         }
         cpui::InputEvent::ScrollLines(lines) => Some(UiInputEvent::ScrollLines(lines)),
-        cpui::InputEvent::AltScreenActive => Some(UiInputEvent::AltScreenActive),
     }
 }

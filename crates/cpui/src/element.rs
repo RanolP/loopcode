@@ -391,19 +391,21 @@ fn build_layout_tree(
                 scroll_nodes,
             )?;
 
-            let mut style = taffy::style::Style::default();
-            style.flex_grow = 0.0;
-            style.flex_shrink = 0.0;
-            style.overflow = Point {
-                x: Overflow::Hidden,
-                y: Overflow::Hidden,
-            };
-            style.size = Size {
-                width: Dimension::Auto,
-                height: scroll
-                    .viewport_lines
-                    .map(|h| Dimension::Length(h as f32))
-                    .unwrap_or(Dimension::Auto),
+            let style = taffy::style::Style {
+                flex_grow: 0.0,
+                flex_shrink: 0.0,
+                overflow: Point {
+                    x: Overflow::Hidden,
+                    y: Overflow::Hidden,
+                },
+                size: Size {
+                    width: Dimension::Auto,
+                    height: scroll
+                        .viewport_lines
+                        .map(|h| Dimension::Length(h as f32))
+                        .unwrap_or(Dimension::Auto),
+                },
+                ..Default::default()
             };
 
             let node = taffy

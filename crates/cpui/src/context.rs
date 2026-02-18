@@ -89,7 +89,7 @@ impl<T: 'static> Global for T {}
 pub trait AppContext {
     type Result<T>;
 
-    fn new<T: 'static>(
+    fn create_entity<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>>;

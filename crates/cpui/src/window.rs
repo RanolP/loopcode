@@ -118,9 +118,6 @@ impl Window {
     }
 
     pub(crate) fn draw(&mut self, element: &AnyElement) -> io::Result<()> {
-        if !crate::app::is_alt_screen_active() {
-            return Ok(());
-        }
         let mut out = io::stdout();
         execute!(out, Clear(ClearType::All), cursor::MoveTo(0, 0))?;
         let (w, h) = terminal::size()?;

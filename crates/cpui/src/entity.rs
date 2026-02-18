@@ -36,7 +36,7 @@ impl<T: 'static> Entity<T> {
         }
     }
 
-    pub(crate) fn into_any(&self) -> AnyEntity {
+    pub(crate) fn as_any(&self) -> AnyEntity {
         AnyEntity {
             id: self.id,
             inner: Rc::new(self.clone()),

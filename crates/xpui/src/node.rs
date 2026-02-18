@@ -271,8 +271,7 @@ impl WrappedRow {
 fn cursor_line_col(value: &str, cursor: usize) -> (usize, usize) {
     let mut line = 0usize;
     let mut col = 0usize;
-    let mut i = 0usize;
-    for ch in value.chars() {
+    for (i, ch) in value.chars().enumerate() {
         if i == cursor {
             break;
         }
@@ -282,7 +281,6 @@ fn cursor_line_col(value: &str, cursor: usize) -> (usize, usize) {
         } else {
             col += 1;
         }
-        i += 1;
     }
     (line, col)
 }
