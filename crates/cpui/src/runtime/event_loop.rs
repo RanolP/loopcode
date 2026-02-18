@@ -45,7 +45,9 @@ where
                     continue;
                 }
                 if let Some(input) = map_input_event(raw) {
-                    app.note_input_activity();
+                    if matches!(input, InputEvent::Key(_)) {
+                        app.note_input_activity();
+                    }
                     if on_input(app, input) {
                         break;
                     }
