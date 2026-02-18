@@ -117,15 +117,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
 
 [[package]]
-name = "app"
-version = "0.1.0"
-dependencies = [
- "clap",
- "unicode-width",
- "xpui",
-]
-
-[[package]]
 name = "ar_archive_writer"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3152,6 +3143,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fae87c125b03c1d2c0150c90365d7d6bcc53fb73a9acaef207d2d065860f062"
 dependencies = [
  "imgref",
+]
+
+[[package]]
+name = "loopcode"
+version = "0.0.1"
+dependencies = [
+ "clap",
+ "unicode-width",
+ "xpui",
 ]
 
 [[package]]
