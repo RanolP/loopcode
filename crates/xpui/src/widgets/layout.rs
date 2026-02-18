@@ -1,5 +1,5 @@
 use crate::{
-    node::{Axis, Container, IntoNode, Node, ScrollView, Stack},
+    node::{Axis, Container, FocusId, IntoNode, Node, ScrollView, Stack},
     style::BoxStyle,
 };
 
@@ -49,6 +49,7 @@ impl IntoNode for StackWidget {
 
 pub struct ContainerWidget {
     style: BoxStyle,
+    focus_id: Option<FocusId>,
     child: Node,
 }
 
@@ -56,6 +57,7 @@ impl ContainerWidget {
     pub fn new(child: impl IntoNode) -> Self {
         Self {
             style: BoxStyle::default(),
+            focus_id: None,
             child: child.into_node(),
         }
     }
@@ -64,12 +66,18 @@ impl ContainerWidget {
         self.style = style;
         self
     }
+
+    pub fn focus(mut self, focus_id: FocusId) -> Self {
+        self.focus_id = Some(focus_id);
+        self
+    }
 }
 
 impl IntoNode for ContainerWidget {
     fn into_node(self) -> Node {
         Node::Container(Container {
             style: self.style,
+            focus_id: self.focus_id,
             child: Box::new(self.child),
         })
     }
@@ -83,6 +91,7 @@ impl ScrollViewWidget {
     pub fn new(child: impl IntoNode) -> Self {
         Self {
             inner: ScrollView {
+                focus_id: None,
                 viewport_lines: None,
                 offset_lines: 0,
                 child: Box::new(child.into_node()),
@@ -97,6 +106,11 @@ impl ScrollViewWidget {
 
     pub fn offset_lines(mut self, lines: u16) -> Self {
         self.inner.offset_lines = lines;
+        self
+    }
+
+    pub fn focus(mut self, focus_id: FocusId) -> Self {
+        self.inner.focus_id = Some(focus_id);
         self
     }
 }

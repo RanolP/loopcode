@@ -1,6 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
-
-use cpui::IntoElement;
+use cpui::{AppContext, IntoElement};
 
 use crate::{
     backend::Backend,
@@ -20,8 +18,17 @@ impl Backend for CpuiBackend {
 }
 
 pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
+    struct HostEntity<A: UiApp + 'static>(cpui::Entity<Host<A>>);
+
+    impl<A: UiApp + 'static> Clone for HostEntity<A> {
+        fn clone(&self) -> Self {
+            Self(self.0.clone())
+        }
+    }
+
     struct Host<A> {
-        app: Rc<RefCell<A>>,
+        app: A,
+        focus_order: Vec<crate::FocusId>,
     }
 
     impl<A: UiApp + 'static> cpui::Render for Host<A> {
@@ -31,13 +38,19 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
             _cx: &mut cpui::Context<'_, Self>,
         ) -> impl cpui::IntoElement {
             let mut backend = CpuiBackend;
-            crate::render(&mut backend, self.app.borrow_mut().render())
+            let node = self.app.render();
+
+            let mut order = Vec::new();
+            node.collect_focus_ids(&mut order);
+            self.focus_order = order.clone();
+
+            if let Some(focus) = self.app.focus_state() {
+                focus.ensure_valid(&order);
+            }
+
+            crate::render(&mut backend, node)
         }
     }
-
-    let app = Rc::new(RefCell::new(app));
-    let app_for_window = app.clone();
-    let app_for_input = app.clone();
 
     cpui::Application::new().run_with_input_handler(
         move |cx: &mut cpui::App| {
@@ -53,14 +66,18 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
                     ..cpui::WindowOptions::default()
                 },
                 |_window, cx| {
-                    let app = app_for_window.clone();
-                    cx.new(|_cx| Host { app })
+                    let entity = cx.new(|_cx| Host {
+                        app,
+                        focus_order: Vec::new(),
+                    });
+                    cx.set_global(HostEntity(entity.clone()));
+                    entity
                 },
             );
 
             cx.activate(true);
         },
-        move |_cx: &mut cpui::App, event| {
+        move |cx: &mut cpui::App, event| {
             if matches!(
                 event,
                 cpui::InputEvent::Key(cpui::KeyInput::Char('q'))
@@ -69,8 +86,34 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
                 return true;
             }
 
-            if let Some(event) = from_cpui_input(event) {
-                app_for_input.borrow_mut().on_input(event);
+            let Some(host_entity) = cx.global::<HostEntity<A>>().cloned().map(|h| h.0) else {
+                return false;
+            };
+
+            let _ = cx.update_entity(&host_entity, |host, _| match event {
+                cpui::InputEvent::Key(cpui::KeyInput::Tab) => {
+                    if let Some(focus) = host.app.focus_state() {
+                        focus.focus_next(&host.focus_order);
+                    }
+                }
+                cpui::InputEvent::Key(cpui::KeyInput::BackTab) => {
+                    if let Some(focus) = host.app.focus_state() {
+                        focus.focus_prev(&host.focus_order);
+                    }
+                }
+                _ => {
+                    if let Some(event) = from_cpui_input(event) {
+                        host.app.on_input(event);
+                    }
+                }
+            });
+
+            if matches!(
+                event,
+                cpui::InputEvent::Key(cpui::KeyInput::Tab)
+                    | cpui::InputEvent::Key(cpui::KeyInput::BackTab)
+            ) {
+                // handled in entity update
             }
             false
         },

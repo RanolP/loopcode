@@ -1,7 +1,7 @@
 use crate::{
     backend::Backend,
     node::{Axis, Node, RichText},
-    runtime::{UiApp, WindowSize},
+    runtime::{UiApp, UiInputEvent, UiKeyInput, WindowSize},
 };
 
 pub trait GpuiAdapter {
@@ -37,17 +37,92 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
 
     struct Host<A> {
         app: A,
+        focus_order: Vec<crate::FocusId>,
+        root_focus: gpui::FocusHandle,
+        wheel_line_carry: f32,
     }
 
     impl<A: UiApp + 'static> Render for Host<A> {
-        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-            root_to_gpui(self.app.render())
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            use gpui::{InteractiveElement, ParentElement, Styled, div, px};
+
+            window.focus(&self.root_focus);
+
+            let node = self.app.render();
+            let mut focus_order = Vec::new();
+            node.collect_focus_ids(&mut focus_order);
+            self.focus_order = focus_order.clone();
+            if let Some(focus) = self.app.focus_state() {
+                focus.ensure_valid(&focus_order);
+            }
+
+            let mut root = div()
+                .size_full()
+                .font_family("DejaVu Sans")
+                .track_focus(&self.root_focus)
+                .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                    if event.keystroke.key == "tab" {
+                        if let Some(focus) = this.app.focus_state() {
+                            if event.keystroke.modifiers.shift {
+                                focus.focus_prev(&this.focus_order);
+                            } else {
+                                focus.focus_next(&this.focus_order);
+                            }
+                        }
+                        cx.notify();
+                        window.refresh();
+                        return;
+                    }
+
+                    if let Some(mapped) = map_gpui_key_event(event) {
+                        this.app.on_input(UiInputEvent::Key(mapped));
+                        cx.notify();
+                        window.refresh();
+                    }
+                }))
+                .on_scroll_wheel(cx.listener(
+                    |this, event: &gpui::ScrollWheelEvent, window, cx| {
+                        let delta_lines = match event.delta {
+                            gpui::ScrollDelta::Lines(delta) => delta.y,
+                            gpui::ScrollDelta::Pixels(delta) => delta.y / px(18.0),
+                        };
+
+                        this.wheel_line_carry += delta_lines;
+                        let whole_lines = this.wheel_line_carry.trunc() as i16;
+                        this.wheel_line_carry -= whole_lines as f32;
+
+                        if whole_lines != 0 {
+                            this.app.on_input(UiInputEvent::ScrollLines(whole_lines));
+                            cx.notify();
+                            window.refresh();
+                        }
+                    },
+                ));
+
+            match node {
+                Node::Container(container) => {
+                    if let Some(bg) = container.style.bg {
+                        root = root.bg(gpui::rgb(bg.0));
+                    }
+                    if let Some(text_color) = container.style.text_color {
+                        root = root.text_color(gpui::rgb(text_color.0));
+                    }
+                    root.child(node_to_gpui(*container.child))
+                        .into_any_element()
+                }
+                other => root.child(node_to_gpui(other)).into_any_element(),
+            }
         }
     }
 
     Application::new().run(move |cx: &mut App| {
         let _ = cx.open_window(WindowOptions::default(), |_window, cx| {
-            cx.new(|_cx| Host { app })
+            cx.new(|cx| Host {
+                app,
+                focus_order: Vec::new(),
+                root_focus: cx.focus_handle(),
+                wheel_line_carry: 0.0,
+            })
         });
         cx.activate(true);
     });
@@ -60,26 +135,27 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
 }
 
 #[cfg(feature = "backend-gpui")]
-fn root_to_gpui(node: Node) -> gpui::AnyElement {
-    use gpui::{IntoElement, ParentElement, Styled, div};
-
-    match node {
-        Node::Container(container) => {
-            let mut root = div().size_full().font_family("DejaVu Sans");
-            if let Some(bg) = container.style.bg {
-                root = root.bg(gpui::rgb(bg.0));
+fn map_gpui_key_event(event: &gpui::KeyDownEvent) -> Option<UiKeyInput> {
+    match event.keystroke.key.as_str() {
+        "up" => Some(UiKeyInput::Up),
+        "down" => Some(UiKeyInput::Down),
+        "pageup" => Some(UiKeyInput::PageUp),
+        "pagedown" => Some(UiKeyInput::PageDown),
+        "home" => Some(UiKeyInput::Home),
+        "end" => Some(UiKeyInput::End),
+        "escape" => Some(UiKeyInput::Esc),
+        _ => {
+            let text = event
+                .keystroke
+                .key_char
+                .as_deref()
+                .unwrap_or(event.keystroke.key.as_str());
+            if text.chars().count() == 1 {
+                text.chars().next().map(UiKeyInput::Char)
+            } else {
+                None
             }
-            if let Some(text_color) = container.style.text_color {
-                root = root.text_color(gpui::rgb(text_color.0));
-            }
-            root.child(node_to_gpui(*container.child))
-                .into_any_element()
         }
-        other => div()
-            .size_full()
-            .font_family("DejaVu Sans")
-            .child(node_to_gpui(other))
-            .into_any_element(),
     }
 }
 
@@ -101,12 +177,20 @@ fn node_to_gpui(node: Node) -> gpui::AnyElement {
             out.child(node_to_gpui(*container.child)).into_any_element()
         }
         Node::ScrollView(scroll) => {
+            const LINE_HEIGHT_PX: f32 = 18.0;
+
             let mut out = div().overflow_hidden();
-            out.style().overflow.y = Some(gpui::Overflow::Scroll);
+            out = out.w_full().flex_none();
             if let Some(lines) = scroll.viewport_lines {
-                out = out.h(gpui::px(lines as f32));
+                out = out.h(gpui::px(lines as f32 * LINE_HEIGHT_PX));
             }
-            out.child(node_to_gpui(*scroll.child)).into_any_element()
+
+            let mut inner = div().relative().w_full().child(node_to_gpui(*scroll.child));
+            if scroll.offset_lines > 0 {
+                inner = inner.top(gpui::px(-(scroll.offset_lines as f32 * LINE_HEIGHT_PX)));
+            }
+
+            out.child(inner).into_any_element()
         }
         Node::Stack(stack) => {
             let mut out = div().flex();
