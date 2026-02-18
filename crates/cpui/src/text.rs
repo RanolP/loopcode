@@ -1,17 +1,8 @@
-use std::io;
-
-use crossterm::{
-    cursor::MoveTo,
-    execute,
-    style::{
-        Attribute, Color as TermColor, Print, ResetColor, SetAttribute, SetBackgroundColor,
-        SetForegroundColor,
-    },
-};
 use unicode_width::UnicodeWidthChar;
 
 use crate::color::Rgba;
 use crate::element::Rect;
+use crate::frame::{CellBuffer, CellStyle};
 
 #[derive(Clone, Debug, Default)]
 pub struct TextStyle {
@@ -168,51 +159,19 @@ impl StyledText {
 
     pub(crate) fn render_at_clipped(
         &self,
-        out: &mut impl io::Write,
+        buffer: &mut CellBuffer,
         x: i32,
         y: i32,
         inherited_color: Option<Rgba>,
         clip: Rect,
-    ) -> io::Result<()> {
+    ) {
         let mut cursor_x = 0i32;
         let mut cursor_y = 0i32;
         let wrap_width = (clip.right - x).max(0);
 
         for run in &self.runs {
-            execute!(out, SetAttribute(Attribute::Reset))?;
-
-            if let Some(color) = run.style.color.or(inherited_color) {
-                execute!(
-                    out,
-                    SetForegroundColor(TermColor::Rgb {
-                        r: color.r,
-                        g: color.g,
-                        b: color.b,
-                    })
-                )?;
-            }
-            if let Some(bg) = run.style.bg {
-                execute!(
-                    out,
-                    SetBackgroundColor(TermColor::Rgb {
-                        r: bg.r,
-                        g: bg.g,
-                        b: bg.b,
-                    })
-                )?;
-            }
-            if run.style.bold {
-                execute!(out, SetAttribute(Attribute::Bold))?;
-            }
-            if run.style.italic {
-                execute!(out, SetAttribute(Attribute::Italic))?;
-            }
-            if run.style.underline {
-                execute!(out, SetAttribute(Attribute::Underlined))?;
-            }
-            if run.style.strikethrough {
-                execute!(out, SetAttribute(Attribute::CrossedOut))?;
-            }
+            let mut style = CellStyle::from(&run.style);
+            style.fg = style.fg.or(inherited_color);
 
             for ch in run.text.chars() {
                 if ch == '\n' {
@@ -234,15 +193,13 @@ impl StyledText {
                     && draw_y >= clip.top
                     && draw_y < clip.bottom
                 {
-                    execute!(out, MoveTo(draw_x as u16, draw_y as u16), Print(ch))?;
+                    buffer.put_char(draw_x, draw_y, ch, style);
                 }
                 cursor_x = cursor_x.saturating_add(ch_width);
             }
-            execute!(out, SetAttribute(Attribute::Reset), ResetColor)?;
         }
-
-        Ok(())
     }
+
 }
 
 pub fn styled_text(text: impl Into<String>) -> StyledText {

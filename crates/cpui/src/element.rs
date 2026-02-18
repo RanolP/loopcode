@@ -6,6 +6,7 @@ use taffy::{Overflow, Point};
 
 use crate::{
     color::Rgba,
+    frame::CellBuffer,
     geometry::Pixels,
     text::{StyledText, styled_text},
 };
@@ -238,6 +239,18 @@ struct TextLeaf {
     color: Option<Rgba>,
 }
 
+struct BgLeaf {
+    node: NodeId,
+    bg: Rgba,
+}
+
+struct BuildState {
+    leaves: Vec<TextLeaf>,
+    backgrounds: Vec<BgLeaf>,
+    parents: HashMap<NodeId, NodeId>,
+    scroll_nodes: HashMap<NodeId, ScrollNode>,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct ScrollNode {
     offset_lines: f32,
@@ -313,9 +326,7 @@ fn build_layout_tree(
     element: &AnyElement,
     wrap_width: usize,
     inherited_color: Option<Rgba>,
-    leaves: &mut Vec<TextLeaf>,
-    parents: &mut HashMap<NodeId, NodeId>,
-    scroll_nodes: &mut HashMap<NodeId, ScrollNode>,
+    state: &mut BuildState,
 ) -> io::Result<NodeId> {
     match element {
         AnyElement::Empty => taffy
@@ -333,7 +344,7 @@ fn build_layout_tree(
                 ..Default::default()
             };
             let node = taffy.new_leaf(style).map_err(io::Error::other)?;
-            leaves.push(TextLeaf {
+            state.leaves.push(TextLeaf {
                 node,
                 inline,
                 color: inherited_color,
@@ -351,7 +362,7 @@ fn build_layout_tree(
                 ..Default::default()
             };
             let node = taffy.new_leaf(style).map_err(io::Error::other)?;
-            leaves.push(TextLeaf {
+            state.leaves.push(TextLeaf {
                 node,
                 inline: inline.clone(),
                 color: inherited_color,
@@ -367,16 +378,17 @@ fn build_layout_tree(
                     child,
                     wrap_width,
                     child_color,
-                    leaves,
-                    parents,
-                    scroll_nodes,
+                    state,
                 )?);
             }
             let node = taffy
                 .new_with_children(taffy_style_from(div), &child_nodes)
                 .map_err(io::Error::other)?;
+            if let Some(bg) = div.style.bg {
+                state.backgrounds.push(BgLeaf { node, bg });
+            }
             for child in child_nodes {
-                parents.insert(child, node);
+                state.parents.insert(child, node);
             }
             Ok(node)
         }
@@ -386,9 +398,7 @@ fn build_layout_tree(
                 &scroll.child,
                 wrap_width,
                 inherited_color,
-                leaves,
-                parents,
-                scroll_nodes,
+                state,
             )?;
 
             let style = taffy::style::Style {
@@ -411,8 +421,8 @@ fn build_layout_tree(
             let node = taffy
                 .new_with_children(style, &[child])
                 .map_err(io::Error::other)?;
-            parents.insert(child, node);
-            scroll_nodes.insert(
+            state.parents.insert(child, node);
+            state.scroll_nodes.insert(
                 node,
                 ScrollNode {
                     offset_lines: scroll.offset_lines as f32,
@@ -424,24 +434,24 @@ fn build_layout_tree(
 }
 
 pub(crate) fn render_element(
-    out: &mut impl io::Write,
     element: &AnyElement,
     terminal_width: u16,
     terminal_height: u16,
-) -> io::Result<()> {
+) -> io::Result<CellBuffer> {
     let mut taffy = TaffyTree::new();
-    let mut leaves = Vec::new();
-    let mut parents = HashMap::new();
-    let mut scroll_nodes = HashMap::new();
+    let mut state = BuildState {
+        leaves: Vec::new(),
+        backgrounds: Vec::new(),
+        parents: HashMap::new(),
+        scroll_nodes: HashMap::new(),
+    };
 
     let root = build_layout_tree(
         &mut taffy,
         element,
         terminal_width as usize,
         None,
-        &mut leaves,
-        &mut parents,
-        &mut scroll_nodes,
+        &mut state,
     )?;
     let mut root_style = taffy.style(root).map_err(io::Error::other)?.clone();
     root_style.size = Size {
@@ -470,17 +480,60 @@ pub(crate) fn render_element(
         bottom: terminal_height as i32,
     };
 
-    for leaf in leaves {
-        let (abs_x, abs_y) = absolute_location(leaf.node, &taffy, &parents, &mut absolute_cache)?;
+    let mut buffer = CellBuffer::new(terminal_width, terminal_height);
+
+    for bg in state.backgrounds {
+        let (abs_x, abs_y) =
+            absolute_location(bg.node, &taffy, &state.parents, &mut absolute_cache)?;
+        let mut y = abs_y;
+        let mut clip = Some(screen);
+        let mut current = bg.node;
+
+        while let Some(parent) = state.parents.get(&current).copied() {
+            if let Some(scroll) = state.scroll_nodes.get(&parent).copied() {
+                y -= scroll.offset_lines;
+
+                let (sx, sy) =
+                    absolute_location(parent, &taffy, &state.parents, &mut absolute_cache)?;
+                let layout = taffy.layout(parent).map_err(io::Error::other)?;
+                let bounds = Rect {
+                    left: sx.floor() as i32,
+                    top: sy.floor() as i32,
+                    right: (sx + layout.size.width).ceil() as i32,
+                    bottom: (sy + layout.size.height).ceil() as i32,
+                };
+                clip = clip.and_then(|existing| existing.intersect(bounds));
+            }
+            current = parent;
+        }
+
+        if let Some(clip) = clip {
+            let layout = taffy.layout(bg.node).map_err(io::Error::other)?;
+            let bounds = Rect {
+                left: abs_x.floor() as i32,
+                top: y.floor() as i32,
+                right: (abs_x + layout.size.width).ceil() as i32,
+                bottom: (y + layout.size.height).ceil() as i32,
+            };
+            if let Some(bounds) = bounds.intersect(clip) {
+                fill_rect_bg(&mut buffer, bounds, bg.bg);
+            }
+        }
+    }
+
+    for leaf in state.leaves {
+        let (abs_x, abs_y) =
+            absolute_location(leaf.node, &taffy, &state.parents, &mut absolute_cache)?;
         let mut y = abs_y;
         let mut clip = Some(screen);
         let mut current = leaf.node;
 
-        while let Some(parent) = parents.get(&current).copied() {
-            if let Some(scroll) = scroll_nodes.get(&parent).copied() {
+        while let Some(parent) = state.parents.get(&current).copied() {
+            if let Some(scroll) = state.scroll_nodes.get(&parent).copied() {
                 y -= scroll.offset_lines;
 
-                let (sx, sy) = absolute_location(parent, &taffy, &parents, &mut absolute_cache)?;
+                let (sx, sy) =
+                    absolute_location(parent, &taffy, &state.parents, &mut absolute_cache)?;
                 let layout = taffy.layout(parent).map_err(io::Error::other)?;
                 let bounds = Rect {
                     left: sx.floor() as i32,
@@ -495,16 +548,40 @@ pub(crate) fn render_element(
 
         if let Some(clip) = clip {
             leaf.inline.render_at_clipped(
-                out,
+                &mut buffer,
                 abs_x.floor() as i32,
                 y.floor() as i32,
                 leaf.color,
                 clip,
-            )?;
+            );
         }
     }
 
-    Ok(())
+    Ok(buffer)
+}
+
+fn fill_rect_bg(
+    buffer: &mut CellBuffer,
+    bounds: Rect,
+    bg: Rgba,
+) {
+    for y in bounds.top..bounds.bottom {
+        for x in bounds.left..bounds.right {
+            if x < 0 || y < 0 {
+                continue;
+            }
+            let Ok(xu) = u16::try_from(x) else {
+                continue;
+            };
+            let Ok(yu) = u16::try_from(y) else {
+                continue;
+            };
+            if xu >= buffer.width() || yu >= buffer.height() {
+                continue;
+            }
+            buffer.set_bg(xu, yu, bg);
+        }
+    }
 }
 
 fn absolute_location(
@@ -541,18 +618,19 @@ mod tests {
         height: f32,
     ) -> io::Result<HashMap<String, (u16, u16)>> {
         let mut taffy = TaffyTree::new();
-        let mut leaves = Vec::new();
-        let mut parents = HashMap::new();
-        let mut scroll_nodes = HashMap::new();
+        let mut state = BuildState {
+            leaves: Vec::new(),
+            backgrounds: Vec::new(),
+            parents: HashMap::new(),
+            scroll_nodes: HashMap::new(),
+        };
 
         let root = build_layout_tree(
             &mut taffy,
             element,
             width as usize,
             None,
-            &mut leaves,
-            &mut parents,
-            &mut scroll_nodes,
+            &mut state,
         )?;
         taffy
             .compute_layout(
@@ -566,8 +644,8 @@ mod tests {
 
         let mut cache = HashMap::new();
         let mut out = HashMap::new();
-        for leaf in leaves {
-            let (x, y) = absolute_location(leaf.node, &taffy, &parents, &mut cache)?;
+        for leaf in state.leaves {
+            let (x, y) = absolute_location(leaf.node, &taffy, &state.parents, &mut cache)?;
             let text = leaf
                 .inline
                 .runs

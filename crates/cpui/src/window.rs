@@ -1,13 +1,21 @@
-use std::{io, marker::PhantomData};
+use std::{
+    io::{self, BufWriter, Write},
+    marker::PhantomData,
+};
 
 use crossterm::{
-    cursor, execute,
-    terminal::{self, Clear, ClearType},
+    cursor,
+    style::{
+        Attribute, Color as TermColor, Print, ResetColor, SetAttribute, SetBackgroundColor,
+        SetForegroundColor,
+    },
+    terminal::{self, BeginSynchronizedUpdate, EndSynchronizedUpdate},
 };
 
 use crate::{
     element::AnyElement,
     entity::WindowId,
+    frame::{CellBuffer, CellStyle},
     geometry::{Bounds, Pixels, Size},
 };
 
@@ -102,11 +110,16 @@ impl Default for WindowOptions {
 pub struct Window {
     id: WindowId,
     pub options: WindowOptions,
+    prev_frame: Option<CellBuffer>,
 }
 
 impl Window {
     pub(crate) fn new(id: WindowId, options: WindowOptions) -> Self {
-        Self { id, options }
+        Self {
+            id,
+            options,
+            prev_frame: None,
+        }
     }
 
     pub fn id(&self) -> WindowId {
@@ -118,9 +131,104 @@ impl Window {
     }
 
     pub(crate) fn draw(&mut self, element: &AnyElement) -> io::Result<()> {
-        let mut out = io::stdout();
-        execute!(out, Clear(ClearType::All), cursor::MoveTo(0, 0))?;
+        let stdout = io::stdout();
+        let mut out = BufWriter::new(stdout.lock());
+        crossterm::queue!(out, BeginSynchronizedUpdate)?;
         let (w, h) = terminal::size()?;
-        crate::element::render_element(&mut out, element, w, h)
+        let current = crate::element::render_element(element, w, h)?;
+        let prev = self
+            .prev_frame
+            .take()
+            .filter(|frame| frame.width() == w && frame.height() == h)
+            .unwrap_or_else(|| CellBuffer::new(w, h));
+        flush_diff(&mut out, &prev, &current)?;
+        self.prev_frame = Some(current);
+        crossterm::queue!(out, EndSynchronizedUpdate)?;
+        out.flush()
+    }
+}
+
+fn flush_diff(out: &mut impl io::Write, prev: &CellBuffer, current: &CellBuffer) -> io::Result<()> {
+    let mut style_emitter = StyleEmitter::default();
+    for run in current.diff_runs(prev) {
+        style_emitter.apply(out, run.style)?;
+        crossterm::queue!(out, cursor::MoveTo(run.x, run.y), Print(run.text))?;
+    }
+
+    style_emitter.reset(out)
+}
+
+#[derive(Default)]
+struct StyleEmitter {
+    current: CellStyle,
+}
+
+impl StyleEmitter {
+    fn apply(&mut self, out: &mut impl io::Write, target: CellStyle) -> io::Result<()> {
+        if self.current == target {
+            return Ok(());
+        }
+
+        if self.current.fg != target.fg {
+            if let Some(color) = target.fg {
+                crossterm::queue!(
+                    out,
+                    SetForegroundColor(TermColor::Rgb {
+                        r: color.r,
+                        g: color.g,
+                        b: color.b,
+                    })
+                )?;
+            } else {
+                crossterm::queue!(out, SetForegroundColor(TermColor::Reset))?;
+            }
+        }
+
+        if self.current.bg != target.bg {
+            if let Some(bg) = target.bg {
+                crossterm::queue!(
+                    out,
+                    SetBackgroundColor(TermColor::Rgb {
+                        r: bg.r,
+                        g: bg.g,
+                        b: bg.b,
+                    })
+                )?;
+            } else {
+                crossterm::queue!(out, SetBackgroundColor(TermColor::Reset))?;
+            }
+        }
+
+        let attrs_changed = self.current.bold != target.bold
+            || self.current.italic != target.italic
+            || self.current.underline != target.underline
+            || self.current.strikethrough != target.strikethrough;
+
+        if attrs_changed {
+            crossterm::queue!(out, SetAttribute(Attribute::Reset))?;
+            if target.bold {
+                crossterm::queue!(out, SetAttribute(Attribute::Bold))?;
+            }
+            if target.italic {
+                crossterm::queue!(out, SetAttribute(Attribute::Italic))?;
+            }
+            if target.underline {
+                crossterm::queue!(out, SetAttribute(Attribute::Underlined))?;
+            }
+            if target.strikethrough {
+                crossterm::queue!(out, SetAttribute(Attribute::CrossedOut))?;
+            }
+        }
+
+        self.current = target;
+        Ok(())
+    }
+
+    fn reset(&mut self, out: &mut impl io::Write) -> io::Result<()> {
+        if self.current != CellStyle::default() {
+            self.current = CellStyle::default();
+            crossterm::queue!(out, SetAttribute(Attribute::Reset), ResetColor)?;
+        }
+        Ok(())
     }
 }

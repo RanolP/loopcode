@@ -3,6 +3,7 @@ mod color;
 mod context;
 mod element;
 mod entity;
+mod frame;
 mod geometry;
 mod runtime;
 mod text;
