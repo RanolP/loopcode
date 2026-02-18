@@ -214,7 +214,7 @@ fn from_cpui_input(event: cpui::InputEvent) -> Option<UiInputEvent> {
         cpui::InputEvent::Key(key) => {
             let mapped = match key {
                 cpui::KeyInput::Tab => UiKeyInput::Tab,
-                cpui::KeyInput::BackTab => UiKeyInput::BackTab,
+                cpui::KeyInput::ShiftTab => UiKeyInput::ShiftTab,
                 cpui::KeyInput::Left => UiKeyInput::Left,
                 cpui::KeyInput::Right => UiKeyInput::Right,
                 cpui::KeyInput::WordLeft => UiKeyInput::WordLeft,
@@ -237,5 +237,6 @@ fn from_cpui_input(event: cpui::InputEvent) -> Option<UiInputEvent> {
             Some(UiInputEvent::Key(mapped))
         }
         cpui::InputEvent::ScrollLines(lines) => Some(UiInputEvent::ScrollLines(lines)),
+        cpui::InputEvent::Tick => Some(UiInputEvent::Tick),
     }
 }

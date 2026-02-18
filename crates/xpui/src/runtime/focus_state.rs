@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use crate::FocusId;
 
@@ -10,6 +11,7 @@ pub struct FocusState {
     focused_path: Option<FocusPath>,
     last_child_by_parent: HashMap<FocusPath, FocusPath>,
     pub(crate) quit_armed: bool,
+    pub(crate) quit_armed_at: Option<Instant>,
 }
 
 impl FocusState {
@@ -19,6 +21,36 @@ impl FocusState {
 
     pub fn focused_path(&self) -> Option<&FocusPath> {
         self.focused_path.as_ref()
+    }
+
+    pub fn quit_armed(&self) -> bool {
+        self.quit_armed
+            && self
+                .quit_armed_at
+                .map(|at| at.elapsed() < Duration::from_secs(2))
+                .unwrap_or(false)
+    }
+
+    pub fn expire_quit_arm(&mut self) {
+        if self.quit_armed
+            && self
+                .quit_armed_at
+                .map(|at| at.elapsed() >= Duration::from_secs(2))
+                .unwrap_or(true)
+        {
+            self.quit_armed = false;
+            self.quit_armed_at = None;
+        }
+    }
+
+    pub(crate) fn arm_quit(&mut self) {
+        self.quit_armed = true;
+        self.quit_armed_at = Some(Instant::now());
+    }
+
+    pub(crate) fn disarm_quit(&mut self) {
+        self.quit_armed = false;
+        self.quit_armed_at = None;
     }
 
     pub fn is_focused(&self, id: FocusId) -> bool {
@@ -39,7 +71,7 @@ impl FocusState {
         self.focused = None;
         self.focused_path = None;
         self.last_child_by_parent.clear();
-        self.quit_armed = false;
+        self.disarm_quit();
     }
 
     pub fn ensure_valid(&mut self, entries: &[FocusEntry]) {

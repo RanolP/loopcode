@@ -2,6 +2,7 @@ mod backend;
 mod backends;
 mod node;
 mod runtime;
+pub mod signal;
 mod style;
 mod widgets;
 

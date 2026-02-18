@@ -11,19 +11,29 @@ where
     H: FnMut(&mut App, InputEvent) -> bool,
 {
     loop {
-        if let Ok(true) = event::poll(Duration::from_millis(250))
-            && let Ok(raw) = event::read()
-        {
-            if matches!(raw, Event::Resize(_, _)) {
-                app.render_all_windows()?;
-                continue;
+        match event::poll(Duration::from_millis(250)) {
+            Ok(true) => {
+                let Ok(raw) = event::read() else {
+                    continue;
+                };
+                if matches!(raw, Event::Resize(_, _)) {
+                    app.render_all_windows()?;
+                    continue;
+                }
+                if let Some(input) = map_input_event(raw) {
+                    if on_input(app, input) {
+                        break;
+                    }
+                    app.render_all_windows()?;
+                }
             }
-            if let Some(input) = map_input_event(raw) {
-                if on_input(app, input) {
+            Ok(false) => {
+                if on_input(app, InputEvent::Tick) {
                     break;
                 }
                 app.render_all_windows()?;
             }
+            Err(_) => continue,
         }
     }
 

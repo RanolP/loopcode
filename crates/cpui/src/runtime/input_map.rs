@@ -9,17 +9,17 @@ pub(crate) fn map_input_event(event: Event) -> Option<InputEvent> {
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER);
             let submit_modifier = key.modifiers.contains(KeyModifiers::ALT);
+            let ctrl_j_submit = key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char('j' | 'J'))
+                && !is_vscode_terminal();
             match key.code {
-                KeyCode::Tab => Some(InputEvent::Key(KeyInput::Tab)),
-                KeyCode::BackTab => Some(InputEvent::Key(KeyInput::BackTab)),
+                KeyCode::BackTab => Some(InputEvent::Key(KeyInput::ShiftTab)),
                 KeyCode::Left if word_modifier => Some(InputEvent::Key(KeyInput::WordLeft)),
                 KeyCode::Right if word_modifier => Some(InputEvent::Key(KeyInput::WordRight)),
                 KeyCode::Left => Some(InputEvent::Key(KeyInput::Left)),
                 KeyCode::Right => Some(InputEvent::Key(KeyInput::Right)),
                 KeyCode::Up => Some(InputEvent::Key(KeyInput::Up)),
                 KeyCode::Down => Some(InputEvent::Key(KeyInput::Down)),
-                KeyCode::PageUp => Some(InputEvent::Key(KeyInput::PageUp)),
-                KeyCode::PageDown => Some(InputEvent::Key(KeyInput::PageDown)),
                 KeyCode::Home => Some(InputEvent::Key(KeyInput::Home)),
                 KeyCode::End => Some(InputEvent::Key(KeyInput::End)),
                 KeyCode::Backspace if word_modifier => {
@@ -30,6 +30,7 @@ pub(crate) fn map_input_event(event: Event) -> Option<InputEvent> {
                     Some(InputEvent::Key(KeyInput::BackspaceWord))
                 }
                 KeyCode::Delete => Some(InputEvent::Key(KeyInput::Delete)),
+                _ if ctrl_j_submit => Some(InputEvent::Key(KeyInput::Submit)),
                 KeyCode::Enter if submit_modifier => Some(InputEvent::Key(KeyInput::Submit)),
                 KeyCode::Enter => Some(InputEvent::Key(KeyInput::Enter)),
                 KeyCode::Char('c' | 'C') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -47,4 +48,10 @@ pub(crate) fn map_input_event(event: Event) -> Option<InputEvent> {
         },
         _ => None,
     }
+}
+
+fn is_vscode_terminal() -> bool {
+    std::env::var("TERM_PROGRAM")
+        .map(|v| v.eq_ignore_ascii_case("vscode"))
+        .unwrap_or(false)
 }

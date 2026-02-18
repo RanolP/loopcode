@@ -65,7 +65,7 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
                 .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                     let mapped = if event.keystroke.key == "tab" {
                         Some(if event.keystroke.modifiers.shift {
-                            UiKeyInput::BackTab
+                            UiKeyInput::ShiftTab
                         } else {
                             UiKeyInput::Tab
                         })
@@ -159,9 +159,13 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
 fn map_gpui_key_event(event: &gpui::KeyDownEvent) -> Option<UiKeyInput> {
     let secondary = event.keystroke.modifiers.secondary();
     let alt = event.keystroke.modifiers.alt;
+    let shift = event.keystroke.modifiers.shift;
     let is_submit = alt && matches!(event.keystroke.key.as_str(), "enter" | "return");
     if is_submit {
         return Some(UiKeyInput::Submit);
+    }
+    if shift && event.keystroke.key == "tab" {
+        return Some(UiKeyInput::ShiftTab);
     }
     if secondary && matches!(event.keystroke.key_char.as_deref(), Some("w")) {
         return Some(UiKeyInput::BackspaceWord);
@@ -174,8 +178,6 @@ fn map_gpui_key_event(event: &gpui::KeyDownEvent) -> Option<UiKeyInput> {
         "right" => Some(UiKeyInput::Right),
         "up" => Some(UiKeyInput::Up),
         "down" => Some(UiKeyInput::Down),
-        "pageup" => Some(UiKeyInput::PageUp),
-        "pagedown" => Some(UiKeyInput::PageDown),
         "home" => Some(UiKeyInput::Home),
         "end" => Some(UiKeyInput::End),
         "backspace" => Some(UiKeyInput::Backspace),

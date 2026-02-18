@@ -10,14 +10,48 @@ struct Args {
     graphics: bool,
 }
 
+enum UiCommand {
+    ScrollHistoryToBottom,
+}
+
+#[derive(Clone, Copy)]
+enum AgentMode {
+    Safe,
+    Autonomous,
+    Jailbreaking,
+}
+
+impl AgentMode {
+    fn cycle(self) -> Self {
+        match self {
+            Self::Safe => Self::Autonomous,
+            Self::Autonomous => Self::Jailbreaking,
+            Self::Jailbreaking => Self::Safe,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Safe => "safe",
+            Self::Autonomous => "autonomous",
+            Self::Jailbreaking => "jailbreaking",
+        }
+    }
+}
+
 struct DemoApp {
     window_size: xpui::WindowSize,
     list_binding: xpui::FocusListBinding,
     list: xpui::FocusListState,
     focus: xpui::FocusState,
     input: xpui::TextInputState,
-    messages: Vec<String>,
-    selected_model: String,
+    messages: xpui::signal::VecSignal<String>,
+    selected_model: xpui::signal::Signal<String>,
+    history_heights_memo: xpui::signal::Memo<(u64, usize), Vec<u16>>,
+    pending_commands: Vec<UiCommand>,
+    is_vscode_terminal: bool,
+    current_dir: String,
+    mode: AgentMode,
 }
 
 impl DemoApp {
@@ -29,12 +63,13 @@ impl DemoApp {
 
     fn new() -> Self {
         let list_binding = xpui::FocusListBinding::new(Self::FIRST_ITEM_ID);
-        let messages = vec![
+        let messages = xpui::signal::VecSignal::from(vec![
             "assistant: 안녕하세요! 무엇을 도와드릴까요?".to_string(),
             "user: 포커스 트리 네비게이션을 개선하고 싶어요.".to_string(),
             "assistant: 좋아요. Enter로 하위 진입, Esc로 상위 복귀 모델로 가죠.".to_string(),
-        ];
+        ]);
         let heights = messages
+            .borrow()
             .iter()
             .map(|message| Self::wrapped_line_count(&Self::format_history_row(message, false), 78))
             .collect::<Vec<_>>();
@@ -49,7 +84,17 @@ impl DemoApp {
             focus,
             input: xpui::TextInputState::default(),
             messages,
-            selected_model: "gpt-4.1".to_string(),
+            selected_model: xpui::signal::Signal::from("gpt-4.1".to_string()),
+            history_heights_memo: xpui::signal::Memo::new(),
+            pending_commands: Vec::new(),
+            is_vscode_terminal: std::env::var("TERM_PROGRAM")
+                .map(|v| v.eq_ignore_ascii_case("vscode"))
+                .unwrap_or(false),
+            current_dir: std::env::current_dir()
+                .ok()
+                .and_then(|p| p.to_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| ".".to_string()),
+            mode: AgentMode::Safe,
         }
     }
 
@@ -146,25 +191,13 @@ impl DemoApp {
         lines.max(1)
     }
 
-    fn recalc_history_heights(&mut self) {
-        let wrap_width = (self.window_size.width as usize).saturating_sub(2).max(1);
-        let heights = self
-            .messages
-            .iter()
-            .map(|message| {
-                Self::wrapped_line_count(&Self::format_history_row(message, false), wrap_width)
-            })
-            .collect::<Vec<_>>();
-        self.list.set_item_heights(heights);
-    }
-
     fn submit_message(&mut self) {
         let text = self.input.value().trim();
         if text.is_empty() {
             return;
         }
         self.messages.push(format!("you: {}", text));
-        self.recalc_history_heights();
+        self.pending_commands.push(UiCommand::ScrollHistoryToBottom);
         self.input.set_value("");
     }
 
@@ -176,28 +209,27 @@ impl DemoApp {
         scroll_focused: bool,
     ) -> String {
         let usage_top = if input_focused {
-            "Alt+Enter send • Enter newline • Esc exit input"
+            if self.is_vscode_terminal {
+                "Alt+Enter send • Enter newline • Esc exit input"
+            } else {
+                "Ctrl+Enter send • Enter newline • Esc exit input"
+            }
         } else if input_container_focused {
             "Enter edit input • Down move to history • Esc step out"
         } else if scroll_focused {
-            "Enter focus item • Up/Down/Page scroll • Esc step out"
+            "Enter focus item • Up/Down scroll • Esc step out"
         } else {
-            "Up/Down move • Enter enter child • Esc step out"
+            "Up/Down move item • Enter select item • Esc step out"
         };
-        let usage_mid = "Tab/Shift+Tab focus • Esc x2 on root quits";
-        let usage_bot = if input_focused {
-            "Focus: Input"
-        } else if input_container_focused {
-            "Focus: Input container"
-        } else if scroll_focused {
-            "Focus: History scroll"
+        let usage_mid = if self.focus.quit_armed() {
+            "Press Ctrl+C again to quit"
         } else {
-            "Focus: History item"
+            "Use arrows / Enter / Esc"
         };
-        let model = format!("Model: {}", self.selected_model);
+        let model = format!("Model: {}", self.selected_model.borrow());
         let line1 = Self::left_right_line(usage_top, &model, width);
 
-        format!("{line1}\n{usage_mid}\n{usage_bot}")
+        format!("{line1}\n{usage_mid}")
     }
 
     fn left_right_line(left: &str, right: &str, width: usize) -> String {
@@ -209,6 +241,35 @@ impl DemoApp {
         let spaces = width - left_w - right_w;
         format!("{left}{}{right}", " ".repeat(spaces))
     }
+
+    fn mode_colors(&self) -> (xpui::Rgb, xpui::Rgb) {
+        match self.mode {
+            AgentMode::Safe => (xpui::rgb(0x132a13), xpui::rgb(0xb7f7c0)),
+            AgentMode::Autonomous => (xpui::rgb(0x10243d), xpui::rgb(0xb3e3ff)),
+            AgentMode::Jailbreaking => (xpui::rgb(0x3a1212), xpui::rgb(0xffc9c9)),
+        }
+    }
+
+    fn status_bar_node(&self, width: usize) -> xpui::Node {
+        let left = format!("Dir: {}", self.current_dir);
+        let right = format!(" Mode: {} ", self.mode.label());
+        let left_w = left.width();
+        let right_w = right.width();
+        let spaces = if left_w + right_w + 1 > width {
+            1
+        } else {
+            width - left_w - right_w
+        };
+        let (mode_bg, mode_fg) = self.mode_colors();
+
+        xpui::text(left)
+            .run(" ".repeat(spaces), xpui::TextStyle::new())
+            .run(
+                right,
+                xpui::TextStyle::new().bg(mode_bg).color(mode_fg).bold(),
+            )
+            .into_node()
+    }
 }
 
 impl xpui::UiApp for DemoApp {
@@ -217,7 +278,21 @@ impl xpui::UiApp for DemoApp {
     }
 
     fn render(&mut self) -> xpui::Node {
-        self.recalc_history_heights();
+        self.focus.expire_quit_arm();
+        let wrap_width = (self.window_size.width as usize).saturating_sub(2).max(1);
+        let heights = self.history_heights_memo.get_or_update(
+            (self.messages.version(), wrap_width),
+            || {
+                self.messages
+                    .borrow()
+                    .iter()
+                    .map(|message| {
+                        Self::wrapped_line_count(&Self::format_history_row(message, false), wrap_width)
+                    })
+                    .collect::<Vec<_>>()
+            },
+        );
+        self.list.set_item_heights(heights);
         self.list_binding
             .sync_list_from_focus(&self.focus, &mut self.list);
 
@@ -240,9 +315,22 @@ impl xpui::UiApp for DemoApp {
             .saturating_sub(reserved_without_history)
             .max(3);
         self.list.set_viewport_lines(history_viewport_lines);
+        for command in self.pending_commands.drain(..) {
+            match command {
+                UiCommand::ScrollHistoryToBottom => {
+                    self.list.scroll_to_bottom();
+                    let count = self.list.item_count();
+                    if count > 0 {
+                        let last = count - 1;
+                        self.list.set_focused_index(last);
+                        self.focus.set_focused(self.list_binding.focus_id(last));
+                    }
+                }
+            }
+        }
 
         let mut list = xpui::column().gap(Self::ITEM_GAP_LINES as u8);
-        for (i, message) in self.messages.iter().enumerate() {
+        for (i, message) in self.messages.borrow().iter().enumerate() {
             let i = i as u16;
             let is_focused = focused == Some(i);
             let body = Self::format_history_row(message, is_focused);
@@ -262,13 +350,6 @@ impl xpui::UiApp for DemoApp {
         xpui::container(
             xpui::column()
                 .gap(1)
-                .child(
-                    xpui::text("Focusable text input + scrollview")
-                        .run(" (terminal-first)", xpui::TextStyle::new().bold()),
-                )
-                .child(xpui::text(
-                    "Tab/Shift+Tab focus, arrows/PgUp/PgDn/Home/End on list, Esc to quit.",
-                ))
                 .child(xpui::text("Chat history"))
                 .child(
                     xpui::container(
@@ -314,24 +395,27 @@ impl xpui::UiApp for DemoApp {
                             input_container_focused,
                             scroll_focused,
                         )))
-                        .viewport_lines(3),
+                        .viewport_lines(2),
                     )
-                    .style(
-                        xpui::BoxStyle::default()
-                            .bg(xpui::rgb(0x161b22))
-                            .text_color(xpui::rgb(0xc9d1d9)),
-                    ),
+                    .style(xpui::BoxStyle::default().text_color(xpui::rgb(0xc9d1d9))),
+                )
+                .child(
+                    xpui::container(self.status_bar_node(
+                        self.window_size.width as usize,
+                    ))
+                    .style(xpui::BoxStyle::default().text_color(xpui::rgb(0x8b949e))),
                 ),
         )
-        .style(
-            xpui::BoxStyle::default()
-                .bg(xpui::rgb(0x101418))
-                .text_color(xpui::rgb(0xe6edf3)),
-        )
+        .style(xpui::BoxStyle::default().text_color(xpui::rgb(0xe6edf3)))
         .into_node()
     }
 
     fn on_input(&mut self, event: xpui::UiInputEvent) {
+        if matches!(event, xpui::UiInputEvent::Key(xpui::UiKeyInput::ShiftTab)) {
+            self.mode = self.mode.cycle();
+            return;
+        }
+
         let line_count = self.input.value().split('\n').count().max(1);
         let gutter_digits = line_count.to_string().len();
         let input_total_width = (self.window_size.width as usize).max(8);

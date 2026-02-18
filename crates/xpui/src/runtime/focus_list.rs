@@ -61,24 +61,12 @@ impl FocusListBinding {
                 list.move_focus_by(1);
                 true
             }
-            UiInputEvent::Key(UiKeyInput::PageUp) => {
-                list.move_focus_by(-(list.viewport_lines() as i16));
-                true
-            }
-            UiInputEvent::Key(UiKeyInput::PageDown) => {
-                list.move_focus_by(list.viewport_lines() as i16);
-                true
-            }
             UiInputEvent::Key(UiKeyInput::Home) => {
                 list.set_focused_index(0);
                 true
             }
             UiInputEvent::Key(UiKeyInput::End) => {
                 list.set_focused_index(list.item_count().saturating_sub(1));
-                true
-            }
-            UiInputEvent::Key(UiKeyInput::Tab | UiKeyInput::BackTab) => {
-                list.ensure_focused_visible();
                 true
             }
             UiInputEvent::ScrollLines(lines) if lines < 0 => {
@@ -123,7 +111,11 @@ impl FocusListState {
     }
 
     pub fn set_viewport_lines(&mut self, viewport_lines: u16) {
-        self.viewport_lines = viewport_lines.max(1);
+        let next = viewport_lines.max(1);
+        if self.viewport_lines == next {
+            return;
+        }
+        self.viewport_lines = next;
         self.ensure_focused_visible();
     }
 
@@ -132,6 +124,9 @@ impl FocusListState {
     }
 
     pub fn set_item_heights(&mut self, item_heights: Vec<u16>) {
+        if self.item_heights == item_heights {
+            return;
+        }
         self.item_heights = item_heights;
         if self.item_heights.is_empty() {
             self.focused_index = 0;
@@ -144,6 +139,14 @@ impl FocusListState {
 
     pub fn max_scroll_offset(&self) -> u16 {
         self.content_lines().saturating_sub(self.viewport_lines)
+    }
+
+    pub fn is_at_bottom(&self) -> bool {
+        self.scroll_offset >= self.max_scroll_offset()
+    }
+
+    pub fn scroll_to_bottom(&mut self) {
+        self.scroll_offset = self.max_scroll_offset();
     }
 
     pub fn content_lines(&self) -> u16 {

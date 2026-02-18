@@ -6,9 +6,15 @@ impl FocusState {
         event: UiInputEvent,
         entries: &[FocusEntry],
     ) -> FocusNavOutcome {
-        let UiInputEvent::Key(key) = event else {
-            self.quit_armed = false;
-            return FocusNavOutcome::Ignored;
+        self.expire_quit_arm();
+
+        let key = match event {
+            UiInputEvent::Key(key) => key,
+            UiInputEvent::Tick => return FocusNavOutcome::Ignored,
+            UiInputEvent::ScrollLines(_) => {
+                self.disarm_quit();
+                return FocusNavOutcome::Ignored;
+            }
         };
 
         let focused_kind = self.focused_entry(entries).map(|entry| entry.kind);
@@ -22,21 +28,13 @@ impl FocusState {
                 }
             }
             UiKeyInput::Interrupt => {
-                if self.quit_armed {
-                    self.quit_armed = false;
+                if self.quit_armed() {
+                    self.disarm_quit();
                     FocusNavOutcome::RequestQuit
                 } else {
-                    self.quit_armed = true;
+                    self.arm_quit();
                     FocusNavOutcome::Handled
                 }
-            }
-            UiKeyInput::Tab => {
-                self.focus_next(entries);
-                FocusNavOutcome::Handled
-            }
-            UiKeyInput::BackTab => {
-                self.focus_prev(entries);
-                FocusNavOutcome::Handled
             }
             UiKeyInput::Enter if focused_kind != Some(FocusKind::TextInput) => {
                 if self.focus_first_child(entries) {
@@ -65,7 +63,7 @@ impl FocusState {
         };
 
         if key != UiKeyInput::Interrupt {
-            self.quit_armed = false;
+            self.disarm_quit();
         }
         out
     }

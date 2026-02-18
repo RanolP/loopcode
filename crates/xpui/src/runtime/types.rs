@@ -3,7 +3,7 @@ use crate::FocusId;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiKeyInput {
     Tab,
-    BackTab,
+    ShiftTab,
     Left,
     Right,
     WordLeft,
@@ -28,6 +28,7 @@ pub enum UiKeyInput {
 pub enum UiInputEvent {
     Key(UiKeyInput),
     ScrollLines(i16),
+    Tick,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

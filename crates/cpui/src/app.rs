@@ -60,7 +60,7 @@ pub type SharedString = String;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyInput {
     Tab,
-    BackTab,
+    ShiftTab,
     Left,
     Right,
     WordLeft,
@@ -85,6 +85,7 @@ pub enum KeyInput {
 pub enum InputEvent {
     Key(KeyInput),
     ScrollLines(i16),
+    Tick,
 }
 
 #[derive(Default)]
