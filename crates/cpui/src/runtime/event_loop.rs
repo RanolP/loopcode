@@ -16,11 +16,22 @@ where
                 let Ok(raw) = event::read() else {
                     continue;
                 };
+                if matches!(raw, Event::FocusGained) {
+                    app.set_terminal_focus(true);
+                    app.render_all_windows()?;
+                    continue;
+                }
+                if matches!(raw, Event::FocusLost) {
+                    app.set_terminal_focus(false);
+                    app.render_all_windows()?;
+                    continue;
+                }
                 if matches!(raw, Event::Resize(_, _)) {
                     app.render_all_windows()?;
                     continue;
                 }
                 if let Some(input) = map_input_event(raw) {
+                    app.note_input_activity();
                     if on_input(app, input) {
                         break;
                     }

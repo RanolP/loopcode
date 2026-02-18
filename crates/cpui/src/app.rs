@@ -144,6 +144,22 @@ impl App {
         Ok(())
     }
 
+    pub(crate) fn note_input_activity(&mut self) {
+        if let Some(active) = self.active_window
+            && let Some(state) = self.windows.get_mut(&active)
+        {
+            state.window.note_input_activity();
+        }
+    }
+
+    pub(crate) fn set_terminal_focus(&mut self, focused: bool) {
+        if let Some(active) = self.active_window
+            && let Some(state) = self.windows.get_mut(&active)
+        {
+            state.window.set_terminal_focus(focused);
+        }
+    }
+
     fn render_window(&mut self, window_id: WindowId) -> Result<()> {
         if !crate::runtime::lifecycle::is_alt_screen_active() {
             return Ok(());

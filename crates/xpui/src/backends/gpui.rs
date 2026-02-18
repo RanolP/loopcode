@@ -1,6 +1,6 @@
 use crate::{
     backend::Backend,
-    node::{Axis, Node, RichText},
+    node::{Axis, Icon, Node, RichText},
     runtime::{FocusEntry, FocusNavOutcome, UiApp, UiInputEvent, UiKeyInput, WindowSize},
 };
 
@@ -207,6 +207,7 @@ fn node_to_gpui(node: Node, viewport_columns: usize) -> gpui::AnyElement {
     match node {
         Node::Empty => div().into_any_element(),
         Node::RichText(text) => rich_text_to_gpui(text).into_any_element(),
+        Node::Icon(icon) => icon_to_gpui(icon),
         Node::TextInput(input) => text_input_to_gpui(input, viewport_columns),
         Node::Container(container) => {
             let mut out = div();
@@ -255,6 +256,19 @@ fn node_to_gpui(node: Node, viewport_columns: usize) -> gpui::AnyElement {
             out.into_any_element()
         }
     }
+}
+
+#[cfg(feature = "backend-gpui")]
+fn icon_to_gpui(icon: Icon) -> gpui::AnyElement {
+    use gpui::{IntoElement, Styled, div, px};
+
+    let _ = icon;
+    div()
+        .w(px(14.0))
+        .h(px(14.0))
+        .rounded_full()
+        .bg(gpui::rgb(0xffffff))
+        .into_any_element()
 }
 
 #[cfg(feature = "backend-gpui")]

@@ -18,7 +18,7 @@ impl TextInputWidget {
                 placeholder: None,
                 cursor,
                 focused: false,
-                cursor_visible: true,
+                gutter_highlighted: false,
                 visible_offset_lines: 0,
             },
         }
@@ -32,7 +32,7 @@ impl TextInputWidget {
                 placeholder: None,
                 cursor: state.cursor(),
                 focused: false,
-                cursor_visible: true,
+                gutter_highlighted: false,
                 visible_offset_lines: 0,
             },
         }
@@ -53,8 +53,8 @@ impl TextInputWidget {
         self
     }
 
-    pub fn cursor_visible(mut self, visible: bool) -> Self {
-        self.inner.cursor_visible = visible;
+    pub fn gutter_highlighted(mut self, highlighted: bool) -> Self {
+        self.inner.gutter_highlighted = highlighted;
         self
     }
 

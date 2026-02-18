@@ -2,7 +2,7 @@ use cpui::{AppContext, IntoElement};
 
 use crate::{
     backend::Backend,
-    node::{Axis, Node, RichText, TextInput},
+    node::{Axis, Icon, IconName, Node, RichText, TextInput},
     runtime::{FocusEntry, FocusNavOutcome, UiApp, UiInputEvent, UiKeyInput, WindowSize},
     style::{Rgb, TextStyle},
 };
@@ -119,6 +119,7 @@ fn node_to_cpui(node: Node, viewport_columns: usize) -> cpui::AnyElement {
     match node {
         Node::Empty => cpui::AnyElement::Empty,
         Node::RichText(text) => text_to_cpui(text).into_any_element(),
+        Node::Icon(icon) => icon_to_cpui(icon).into_any_element(),
         Node::TextInput(input) => text_input_to_cpui(input, viewport_columns),
         Node::Container(container) => {
             let mut out = cpui::div();
@@ -183,6 +184,25 @@ fn text_to_cpui(text: RichText) -> cpui::StyledText {
     out
 }
 
+fn icon_to_cpui(icon: Icon) -> cpui::StyledText {
+    let glyph = match icon.name {
+        IconName::Search => "󰍉",
+        IconName::Send => "󰒊",
+        IconName::Robot => "󰚩",
+        IconName::Info => "󰋼",
+        IconName::Warning => "󰀪",
+        IconName::Error => "󰅚",
+        IconName::Check => "󰄬",
+        IconName::ChevronRight => "󰅂",
+        IconName::ChevronDown => "󰅀",
+    };
+    let mut style = cpui::TextStyle::new();
+    if let Some(color) = icon.color {
+        style = style.color(to_cpui_color(color));
+    }
+    cpui::StyledText::empty().push_run(glyph, style)
+}
+
 fn to_cpui_text_style(style: TextStyle) -> cpui::TextStyle {
     let mut out = cpui::TextStyle::new();
     if style.bold {
@@ -199,9 +219,14 @@ fn to_cpui_text_style(style: TextStyle) -> cpui::TextStyle {
     }
     if let Some(color) = style.color {
         out = out.color(to_cpui_color(color));
+    } else if style.fg_transparent {
+        out = out.color_transparent();
     }
     if let Some(bg) = style.bg {
         out = out.bg(to_cpui_color(bg));
+    }
+    if style.cursor_anchor {
+        out = out.cursor_anchor(style.cursor_after);
     }
     out
 }

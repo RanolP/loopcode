@@ -1,5 +1,4 @@
 use clap::Parser;
-use std::time::{Duration, Instant};
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 use xpui::IntoNode;
@@ -147,8 +146,6 @@ struct DemoApp {
     is_vscode_terminal: bool,
     current_dir: String,
     mode: AgentMode,
-    cursor_visible: bool,
-    last_cursor_blink_at: Instant,
 }
 
 impl DemoApp {
@@ -182,8 +179,6 @@ impl DemoApp {
                 .and_then(|p| p.to_str().map(|s| s.to_string()))
                 .unwrap_or_else(|| ".".to_string()),
             mode: AgentMode::Safe,
-            cursor_visible: true,
-            last_cursor_blink_at: Instant::now(),
         }
     }
 
@@ -421,14 +416,7 @@ impl xpui::UiApp for DemoApp {
             let body = Self::format_history_row(message, is_focused);
             list = list.child(
                 xpui::container(xpui::text(body))
-                    .focus(self.nav.list_binding.focus_id(i))
-                    .style(if is_focused {
-                        xpui::BoxStyle::default()
-                            .bg(xpui::rgb(0x1f2a36))
-                            .text_color(xpui::rgb(0xb3e3ff))
-                    } else {
-                        xpui::BoxStyle::default()
-                    }),
+                    .focus(self.nav.list_binding.focus_id(i)),
             );
         }
 
@@ -442,14 +430,7 @@ impl xpui::UiApp for DemoApp {
                             .focus(xpui::FocusId(Self::SCROLL_ID))
                             .viewport_lines(history_viewport_lines)
                             .offset_lines(self.nav.list.scroll_offset()),
-                    )
-                    .style(if scroll_focused {
-                        xpui::BoxStyle::default()
-                            .bg(xpui::rgb(0x1f2a36))
-                            .text_color(xpui::rgb(0xb3e3ff))
-                    } else {
-                        xpui::BoxStyle::default()
-                    }),
+                    ),
                 )
                 .child(
                     xpui::container(
@@ -458,20 +439,13 @@ impl xpui::UiApp for DemoApp {
                                 .placeholder("Find and fix issues.")
                                 .focus(xpui::FocusId(Self::INPUT_ID))
                                 .focused(input_focused)
-                                .cursor_visible(input_focused && self.cursor_visible)
+                                .gutter_highlighted(input_focused || input_container_focused)
                                 .visible_offset_lines(input_offset_lines),
                         )
                         .viewport_lines(input_viewport_lines)
                         .offset_lines(input_offset_lines),
                     )
-                    .focus(xpui::FocusId(Self::INPUT_CONTAINER_ID))
-                    .style(if input_focused || input_container_focused {
-                        xpui::BoxStyle::default()
-                            .bg(xpui::rgb(0x1f2a36))
-                            .text_color(xpui::rgb(0xb3e3ff))
-                    } else {
-                        xpui::BoxStyle::default()
-                    }),
+                    .focus(xpui::FocusId(Self::INPUT_CONTAINER_ID)),
                 )
                 .child(
                     xpui::container(
@@ -495,21 +469,6 @@ impl xpui::UiApp for DemoApp {
     }
 
     fn on_input(&mut self, event: xpui::UiInputEvent) {
-        if matches!(event, xpui::UiInputEvent::Tick) {
-            if self.is_input_focused()
-                && self.last_cursor_blink_at.elapsed() >= Duration::from_millis(500)
-            {
-                self.cursor_visible = !self.cursor_visible;
-                self.last_cursor_blink_at = Instant::now();
-            }
-            return;
-        }
-
-        if self.is_input_focused() {
-            self.cursor_visible = true;
-            self.last_cursor_blink_at = Instant::now();
-        }
-
         if matches!(event, xpui::UiInputEvent::Key(xpui::UiKeyInput::ShiftTab)) {
             self.mode = self.mode.cycle();
             return;

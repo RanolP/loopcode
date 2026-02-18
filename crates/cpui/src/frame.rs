@@ -21,6 +21,9 @@ pub(crate) struct CellStyle {
     pub(crate) underline: bool,
     pub(crate) strikethrough: bool,
     pub(crate) fg: Option<Rgba>,
+    pub(crate) fg_transparent: bool,
+    pub(crate) cursor_anchor: bool,
+    pub(crate) cursor_after: bool,
     pub(crate) bg: Option<Rgba>,
 }
 
@@ -32,6 +35,9 @@ impl From<TextStyle> for CellStyle {
             underline: value.underline,
             strikethrough: value.strikethrough,
             fg: value.color,
+            fg_transparent: value.fg_transparent,
+            cursor_anchor: value.cursor_anchor,
+            cursor_after: value.cursor_after,
             bg: value.bg,
         }
     }
@@ -45,6 +51,9 @@ impl From<&TextStyle> for CellStyle {
             underline: value.underline,
             strikethrough: value.strikethrough,
             fg: value.color,
+            fg_transparent: value.fg_transparent,
+            cursor_anchor: value.cursor_anchor,
+            cursor_after: value.cursor_after,
             bg: value.bg,
         }
     }
@@ -66,6 +75,9 @@ impl Cell {
                 underline: false,
                 strikethrough: false,
                 fg: None,
+                fg_transparent: false,
+                cursor_anchor: false,
+                cursor_after: false,
                 bg: None,
             },
         }
@@ -77,6 +89,7 @@ pub(crate) struct CellBuffer {
     width: u16,
     height: u16,
     cells: Vec<Cell>,
+    cursor: Option<(u16, u16)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,6 +107,7 @@ impl CellBuffer {
             width,
             height,
             cells: vec![Cell::blank(); len],
+            cursor: None,
         }
     }
 
@@ -140,6 +154,10 @@ impl CellBuffer {
         }
 
         let mut head_style = style;
+        if head_style.fg_transparent {
+            head_style.fg = head_style.bg.or(self.get(x, y).style.bg);
+            head_style.fg_transparent = false;
+        }
         if head_style.bg.is_none() {
             head_style.bg = self.get(x, y).style.bg;
         }
@@ -151,11 +169,23 @@ impl CellBuffer {
                 style: head_style,
             },
         );
+        if style.cursor_anchor {
+            let advance = if style.cursor_after {
+                glyph_width as u16
+            } else {
+                0
+            };
+            self.set_cursor(x, y, advance);
+        }
 
         if glyph_width > 1 {
             let tail_x = x.saturating_add(1);
             if tail_x < self.width {
                 let mut tail_style = style;
+                if tail_style.fg_transparent {
+                    tail_style.fg = tail_style.bg.or(self.get(tail_x, y).style.bg);
+                    tail_style.fg_transparent = false;
+                }
                 if tail_style.bg.is_none() {
                     tail_style.bg = self.get(tail_x, y).style.bg;
                 }
@@ -169,6 +199,10 @@ impl CellBuffer {
                 );
             }
         }
+    }
+
+    pub(crate) fn cursor(&self) -> Option<(u16, u16)> {
+        self.cursor
     }
 
     pub(crate) fn diff_runs(&self, prev: &Self) -> Vec<CellRun> {
@@ -221,6 +255,13 @@ impl CellBuffer {
 
     fn idx(&self, x: u16, y: u16) -> usize {
         usize::from(y) * usize::from(self.width) + usize::from(x)
+    }
+
+    fn set_cursor(&mut self, x: u16, y: u16, advance: u16) {
+        let x = x.saturating_add(advance);
+        let x = x.min(self.width.saturating_sub(1));
+        let y = y.min(self.height.saturating_sub(1));
+        self.cursor = Some((x, y));
     }
 }
 

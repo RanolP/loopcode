@@ -4,8 +4,8 @@ use std::{
 };
 
 use crossterm::event::{
-    DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
+    DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::style::ResetColor;
@@ -13,6 +13,12 @@ use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{cursor, terminal::Clear, terminal::ClearType};
 
 static ALT_SCREEN_ACTIVE: AtomicBool = AtomicBool::new(false);
+// NOTE: crossterm currently does not expose cursor-shape APIs (DECSCUSR),
+// so we emit raw CSI sequences for blinking block cursor and reset.
+const CURSOR_COLOR_OSC: &str = "\x1b]12;#a277ff\x07";
+const RESET_CURSOR_COLOR_OSC: &str = "\x1b]112\x07";
+const BLOCK_CURSOR_CSI: &str = "\x1b[2 q";
+const RESET_CURSOR_STYLE_CSI: &str = "\x1b[0 q";
 const KEYBOARD_FLAGS: KeyboardEnhancementFlags =
     KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
         .union(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
@@ -34,13 +40,17 @@ pub(crate) fn enter_terminal() -> io::Result<TerminalGuard> {
         EnterAlternateScreen,
         Clear(ClearType::All),
         cursor::MoveTo(0, 0),
-        EnableMouseCapture
+        EnableMouseCapture,
+        EnableFocusChange
     ) {
         let _ = terminal::disable_raw_mode();
         return Err(err);
     }
     ALT_SCREEN_ACTIVE.store(true, Ordering::Relaxed);
     let _ = execute!(io::stdout(), PushKeyboardEnhancementFlags(KEYBOARD_FLAGS));
+    let _ = io::stdout().write_all(CURSOR_COLOR_OSC.as_bytes());
+    let _ = io::stdout().write_all(BLOCK_CURSOR_CSI.as_bytes());
+    let _ = io::stdout().flush();
 
     Ok(TerminalGuard)
 }
@@ -54,10 +64,13 @@ impl Drop for TerminalGuard {
         let _ = execute!(
             out,
             DisableMouseCapture,
+            DisableFocusChange,
             PopKeyboardEnhancementFlags,
             ResetColor,
             cursor::Show
         );
+        let _ = out.write_all(RESET_CURSOR_COLOR_OSC.as_bytes());
+        let _ = out.write_all(RESET_CURSOR_STYLE_CSI.as_bytes());
         let _ = execute!(out, LeaveAlternateScreen);
         ALT_SCREEN_ACTIVE.store(false, Ordering::Relaxed);
         let _ = out.flush();

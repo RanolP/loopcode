@@ -1,7 +1,9 @@
+mod icon;
 mod layout;
 mod text;
 mod text_input;
 
+pub use icon::{IconWidget, icon};
 pub use layout::{
     ContainerWidget, ScrollViewWidget, StackWidget, column, container, row, scroll_view,
 };

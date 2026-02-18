@@ -1,6 +1,7 @@
 use std::{
     io::{self, BufWriter, Write},
     marker::PhantomData,
+    time::{Duration, Instant},
 };
 
 use crossterm::{
@@ -15,7 +16,7 @@ use crossterm::{
 use crate::{
     element::AnyElement,
     entity::WindowId,
-    frame::{CellBuffer, CellStyle, Glyph},
+    frame::{CellBuffer, CellStyle},
     geometry::{Bounds, Pixels, Size},
 };
 
@@ -111,6 +112,9 @@ pub struct Window {
     id: WindowId,
     pub options: WindowOptions,
     prev_frame: Option<CellBuffer>,
+    cursor_visible: bool,
+    cursor_blink_at: Instant,
+    terminal_focused: bool,
 }
 
 impl Window {
@@ -119,6 +123,9 @@ impl Window {
             id,
             options,
             prev_frame: None,
+            cursor_visible: true,
+            cursor_blink_at: Instant::now(),
+            terminal_focused: true,
         }
     }
 
@@ -142,14 +149,43 @@ impl Window {
             .filter(|frame| frame.width() == w && frame.height() == h)
             .unwrap_or_else(|| CellBuffer::new(w, h));
         flush_diff(&mut out, &prev, &current)?;
-        if let Some((cx, cy)) = find_text_cursor(&current) {
-            crossterm::queue!(out, cursor::MoveTo(cx, cy), cursor::Show)?;
+        if self.terminal_focused {
+            if let Some((cx, cy)) = current.cursor() {
+                if self.cursor_blink_at.elapsed() >= Duration::from_millis(570) {
+                    self.cursor_visible = !self.cursor_visible;
+                    self.cursor_blink_at = Instant::now();
+                }
+                if self.cursor_visible {
+                    crossterm::queue!(out, cursor::MoveTo(cx, cy), cursor::Show)?;
+                } else {
+                    crossterm::queue!(out, cursor::Hide)?;
+                }
+            } else {
+                self.cursor_visible = true;
+                self.cursor_blink_at = Instant::now();
+                crossterm::queue!(out, cursor::Hide)?;
+            }
         } else {
+            if self.cursor_blink_at.elapsed() >= Duration::from_millis(570) {
+                self.cursor_visible = true;
+                self.cursor_blink_at = Instant::now();
+            }
             crossterm::queue!(out, cursor::Hide)?;
         }
         self.prev_frame = Some(current);
         crossterm::queue!(out, EndSynchronizedUpdate)?;
         out.flush()
+    }
+
+    pub(crate) fn note_input_activity(&mut self) {
+        self.cursor_visible = true;
+        self.cursor_blink_at = Instant::now();
+    }
+
+    pub(crate) fn set_terminal_focus(&mut self, focused: bool) {
+        self.terminal_focused = focused;
+        self.cursor_visible = true;
+        self.cursor_blink_at = Instant::now();
     }
 }
 
@@ -163,22 +199,6 @@ fn flush_diff(out: &mut impl io::Write, prev: &CellBuffer, current: &CellBuffer)
     style_emitter.reset(out)
 }
 
-fn find_text_cursor(frame: &CellBuffer) -> Option<(u16, u16)> {
-    let cursor_bg = crate::rgb(0x2f81f7);
-    let cursor_fg = crate::rgb(0x0d1117);
-    for y in 0..frame.height() {
-        for x in 0..frame.width() {
-            let cell = frame.get(x, y);
-            if cell.style.bg == Some(cursor_bg)
-                && cell.style.fg == Some(cursor_fg)
-                && matches!(cell.glyph, Glyph::Char(_))
-            {
-                return Some((x, y));
-            }
-        }
-    }
-    None
-}
 
 #[derive(Default)]
 struct StyleEmitter {

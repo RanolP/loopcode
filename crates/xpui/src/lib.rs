@@ -10,7 +10,9 @@ pub use backend::{Backend, render};
 #[cfg(feature = "backend-cpui")]
 pub use backends::CpuiBackend;
 pub use backends::{GpuiAdapter, GpuiBackend};
-pub use node::{Axis, FocusId, IntoNode, Node, RichText, ScrollView, TextInput, TextRun};
+pub use node::{
+    Axis, FocusId, Icon, IconName, IntoNode, Node, RichText, ScrollView, TextInput, TextRun,
+};
 pub use runtime::{
     FocusEntry, FocusKind, FocusListBinding, FocusListState, FocusNavOutcome, FocusPath,
     FocusState, TextInputState, UiApp, UiInputEvent, UiKeyInput, WindowSize, run_gpui,
@@ -20,6 +22,6 @@ pub use runtime::{
 pub use runtime::{run_cpui, run_cpui_with_size};
 pub use style::{BoxStyle, Rgb, TextStyle, rgb};
 pub use widgets::{
-    ContainerWidget, ScrollViewWidget, StackWidget, TextInputWidget, TextWidget, column, container,
-    row, scroll_view, text, text_input, text_input_from_state,
+    ContainerWidget, IconWidget, ScrollViewWidget, StackWidget, TextInputWidget, TextWidget,
+    column, container, icon, row, scroll_view, text, text_input, text_input_from_state,
 };

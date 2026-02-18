@@ -11,6 +11,9 @@ pub struct TextStyle {
     pub underline: bool,
     pub strikethrough: bool,
     pub color: Option<Rgba>,
+    pub fg_transparent: bool,
+    pub cursor_anchor: bool,
+    pub cursor_after: bool,
     pub bg: Option<Rgba>,
 }
 
@@ -21,6 +24,12 @@ impl TextStyle {
 
     pub fn bold(mut self) -> Self {
         self.bold = true;
+        self
+    }
+
+    pub fn cursor_anchor(mut self, after: bool) -> Self {
+        self.cursor_anchor = true;
+        self.cursor_after = after;
         self
     }
 
@@ -41,6 +50,13 @@ impl TextStyle {
 
     pub fn color(mut self, color: Rgba) -> Self {
         self.color = Some(color);
+        self.fg_transparent = false;
+        self
+    }
+
+    pub fn color_transparent(mut self) -> Self {
+        self.color = None;
+        self.fg_transparent = true;
         self
     }
 
@@ -171,7 +187,9 @@ impl StyledText {
 
         for run in &self.runs {
             let mut style = CellStyle::from(&run.style);
-            style.fg = style.fg.or(inherited_color);
+            if !style.fg_transparent {
+                style.fg = style.fg.or(inherited_color);
+            }
 
             for ch in run.text.chars() {
                 if ch == '\n' {

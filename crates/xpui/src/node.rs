@@ -53,6 +53,26 @@ pub struct RichText {
     pub runs: Vec<TextRun>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IconName {
+    Search,
+    Send,
+    Robot,
+    Info,
+    Warning,
+    Error,
+    Check,
+    ChevronRight,
+    ChevronDown,
+}
+
+#[derive(Clone, Debug)]
+pub struct Icon {
+    pub name: IconName,
+    pub color: Option<Rgb>,
+    pub asset_path: Option<String>,
+}
+
 impl RichText {
     pub fn plain(text: impl Into<String>) -> Self {
         Self {
@@ -77,14 +97,14 @@ pub struct TextInput {
     pub placeholder: Option<String>,
     pub cursor: usize,
     pub focused: bool,
-    pub cursor_visible: bool,
+    pub gutter_highlighted: bool,
     pub visible_offset_lines: u16,
 }
 
 impl TextInput {
     pub fn to_wrapped_rich_text(&self, total_width: usize) -> RichText {
         let line_number_style = TextStyle::new().color(Rgb(0x6e7681));
-        let pipe_style = if self.focused {
+        let pipe_style = if self.gutter_highlighted {
             TextStyle::new().color(Rgb(0x2f81f7))
         } else {
             TextStyle::new().color(Rgb(0x6e7681))
@@ -110,7 +130,11 @@ impl TextInput {
                 style: line_number_style.clone(),
             });
             runs.push(TextRun {
-                text: " | ".to_string(),
+                text: if self.gutter_highlighted && row.is_cursor_line && row.row_in_line == show_idx {
+                    " > ".to_string()
+                } else {
+                    " | ".to_string()
+                },
                 style: pipe_style.clone(),
             });
             for (ch, style) in row.content {
@@ -153,7 +177,7 @@ impl TextInput {
 
     pub fn to_wrapped_gutter_with_pipe_rich_text(&self, total_width: usize) -> RichText {
         let line_number_style = TextStyle::new().color(Rgb(0x6e7681));
-        let pipe_style = if self.focused {
+        let pipe_style = if self.gutter_highlighted {
             TextStyle::new().color(Rgb(0x2f81f7))
         } else {
             TextStyle::new().color(Rgb(0x6e7681))
@@ -179,7 +203,11 @@ impl TextInput {
                 style: line_number_style.clone(),
             });
             runs.push(TextRun {
-                text: " | ".to_string(),
+                text: if self.gutter_highlighted && row.is_cursor_line && row.row_in_line == show_idx {
+                    " > ".to_string()
+                } else {
+                    " | ".to_string()
+                },
                 style: pipe_style.clone(),
             });
         }
@@ -208,13 +236,12 @@ impl TextInput {
     }
 
     fn wrapped_rows(&self, total_width: usize) -> (usize, Vec<WrappedRow>) {
-        let cursor_style = TextStyle::new().bg(Rgb(0x2f81f7)).color(Rgb(0x0d1117));
         let placeholder_style = TextStyle::new().italic().color(Rgb(0x6e7681));
         let lines: Vec<&str> = self.value.split('\n').collect();
         let line_count = lines.len().max(1);
         let gutter_digits = line_count.to_string().len();
         let content_width = total_width.saturating_sub(gutter_digits).max(1);
-        let (cursor_line, cursor_col) = if self.focused {
+        let (cursor_line, cursor_col) = if self.gutter_highlighted {
             cursor_line_col(&self.value, self.cursor)
         } else {
             (0, 0)
@@ -225,15 +252,27 @@ impl TextInput {
         for (line_idx, line) in lines.iter().enumerate() {
             let mut styled_chars: Vec<(char, TextStyle)> = Vec::new();
             let chars: Vec<char> = line.chars().collect();
-            if self.focused && self.cursor_visible && cursor_line == line_idx {
+            if self.focused && cursor_line == line_idx {
                 let col = cursor_col.min(chars.len());
-                for ch in &chars[..col] {
-                    styled_chars.push((*ch, TextStyle::default()));
-                }
-                styled_chars.push((chars.get(col).copied().unwrap_or(' '), cursor_style.clone()));
-                if col < chars.len() {
-                    for ch in &chars[col + 1..] {
-                        styled_chars.push((*ch, TextStyle::default()));
+                if chars.is_empty() {
+                    styled_chars.push((' ', TextStyle::new().cursor_anchor(false)));
+                } else if col >= chars.len() {
+                    for (idx, ch) in chars.iter().copied().enumerate() {
+                        let style = if idx + 1 == chars.len() {
+                            TextStyle::new().cursor_anchor(true)
+                        } else {
+                            TextStyle::default()
+                        };
+                        styled_chars.push((ch, style));
+                    }
+                } else {
+                    for (idx, ch) in chars.iter().copied().enumerate() {
+                        let style = if idx == col {
+                            TextStyle::new().cursor_anchor(false)
+                        } else {
+                            TextStyle::default()
+                        };
+                        styled_chars.push((ch, style));
                     }
                 }
             } else if line.is_empty() && !self.focused && self.value.is_empty() {
@@ -254,6 +293,7 @@ impl TextInput {
             for (row_idx, row) in wrapped.into_iter().enumerate() {
                 out.push(WrappedRow {
                     line_number: line_idx + 1,
+                    is_cursor_line: self.gutter_highlighted && cursor_line == line_idx,
                     row_in_line: row_idx,
                     line_rows: wrapped_len,
                     global_row: global_row_index,
@@ -269,6 +309,7 @@ impl TextInput {
 #[derive(Clone)]
 struct WrappedRow {
     line_number: usize,
+    is_cursor_line: bool,
     row_in_line: usize,
     line_rows: usize,
     global_row: usize,
@@ -333,6 +374,7 @@ pub enum Node {
     Container(Container),
     ScrollView(ScrollView),
     RichText(RichText),
+    Icon(Icon),
     TextInput(TextInput),
     Empty,
 }
@@ -401,7 +443,7 @@ impl Node {
                     });
                 }
             }
-            Node::RichText(_) | Node::Empty => {}
+            Node::RichText(_) | Node::Icon(_) | Node::Empty => {}
         }
     }
 }
