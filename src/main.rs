@@ -276,45 +276,95 @@ impl DemoApp {
         lines.max(1)
     }
 
-    fn bottom_bar_text(
+    fn usage_top_parts(
+        &self,
+        input_focused: bool,
+        input_container_focused: bool,
+        scroll_focused: bool,
+    ) -> Vec<(&'static str, &'static str)> {
+        if input_focused {
+            if self.is_vscode_terminal {
+                vec![
+                    ("Alt+Enter", "send"),
+                    ("Enter", "newline"),
+                    ("Esc", "exit input"),
+                ]
+            } else {
+                vec![
+                    ("Ctrl+Enter", "send"),
+                    ("Enter", "newline"),
+                    ("Esc", "exit input"),
+                ]
+            }
+        } else if input_container_focused {
+            vec![
+                ("Enter", "edit input"),
+                ("Down", "move to history"),
+                ("Esc", "step out"),
+            ]
+        } else if scroll_focused {
+            vec![
+                ("Enter", "focus item"),
+                ("Up/Down", "scroll"),
+                ("Esc", "step out"),
+            ]
+        } else {
+            vec![
+                ("Up/Down", "move item"),
+                ("Enter", "select item"),
+                ("Esc", "step out"),
+            ]
+        }
+    }
+
+    fn bottom_bar_node(
         &self,
         width: usize,
         input_focused: bool,
         input_container_focused: bool,
         scroll_focused: bool,
-    ) -> String {
-        let usage_top = if input_focused {
-            if self.is_vscode_terminal {
-                "Alt+Enter send • Enter newline • Esc exit input"
-            } else {
-                "Ctrl+Enter send • Enter newline • Esc exit input"
-            }
-        } else if input_container_focused {
-            "Enter edit input • Down move to history • Esc step out"
-        } else if scroll_focused {
-            "Enter focus item • Up/Down scroll • Esc step out"
-        } else {
-            "Up/Down move item • Enter select item • Esc step out"
-        };
+    ) -> xpui::Node {
+        let parts = self.usage_top_parts(input_focused, input_container_focused, scroll_focused);
+        let usage_top_plain = parts
+            .iter()
+            .map(|(k, a)| format!("{k} {a}"))
+            .collect::<Vec<_>>()
+            .join(" • ");
         let usage_mid = if self.nav.focus.quit_armed() {
             "Press Ctrl+C again to quit"
         } else {
             "Use arrows / Enter / Esc"
         };
         let model = format!("Model: {}", self.chat.selected_model.borrow());
-        let line1 = Self::left_right_line(usage_top, &model, width);
+        let left_w = usage_top_plain.width();
+        let right_w = model.width();
+        let spaces = if left_w + right_w + 1 > width {
+            1
+        } else {
+            width - left_w - right_w
+        };
 
-        format!("{line1}\n{usage_mid}")
-    }
+        let key_style = xpui::TextStyle::new().color(xpui::rgb(0xa3afbf));
+        let action_style = xpui::TextStyle::new().color(xpui::rgb(0x7f8a9a));
+        let dot_style = xpui::TextStyle::new().color(xpui::rgb(0x596272));
 
-    fn left_right_line(left: &str, right: &str, width: usize) -> String {
-        let left_w = left.width();
-        let right_w = right.width();
-        if left_w + right_w + 1 > width {
-            return format!("{left} {right}");
+        let mut line1 = xpui::text("");
+        for (i, (key, action)) in parts.iter().enumerate() {
+            if i > 0 {
+                line1 = line1.run(" · ", dot_style.clone());
+            }
+            line1 = line1
+                .run(*key, key_style.clone())
+                .run(" ", action_style.clone())
+                .run(*action, action_style.clone());
         }
-        let spaces = width - left_w - right_w;
-        format!("{left}{}{right}", " ".repeat(spaces))
+        line1 = line1.run(" ".repeat(spaces), xpui::TextStyle::new());
+        line1 = line1.run(model, xpui::TextStyle::new());
+
+        line1
+            .run("\n", xpui::TextStyle::new())
+            .run(usage_mid, xpui::TextStyle::new())
+            .into_node()
     }
 
     fn mode_colors(&self) -> (xpui::Rgb, xpui::Rgb) {
@@ -449,12 +499,12 @@ impl xpui::UiApp for DemoApp {
                 )
                 .child(
                     xpui::container(
-                        xpui::scroll_view(xpui::text(self.bottom_bar_text(
+                        xpui::scroll_view(self.bottom_bar_node(
                             self.window_size.width as usize,
                             input_focused,
                             input_container_focused,
                             scroll_focused,
-                        )))
+                        ))
                         .viewport_lines(2),
                     )
                     .style(xpui::BoxStyle::default().text_color(xpui::rgb(0xc9d1d9))),

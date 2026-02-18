@@ -21,7 +21,6 @@ pub(crate) struct CellStyle {
     pub(crate) underline: bool,
     pub(crate) strikethrough: bool,
     pub(crate) fg: Option<Rgba>,
-    pub(crate) fg_transparent: bool,
     pub(crate) cursor_anchor: bool,
     pub(crate) cursor_after: bool,
     pub(crate) bg: Option<Rgba>,
@@ -35,7 +34,6 @@ impl From<TextStyle> for CellStyle {
             underline: value.underline,
             strikethrough: value.strikethrough,
             fg: value.color,
-            fg_transparent: value.fg_transparent,
             cursor_anchor: value.cursor_anchor,
             cursor_after: value.cursor_after,
             bg: value.bg,
@@ -51,7 +49,6 @@ impl From<&TextStyle> for CellStyle {
             underline: value.underline,
             strikethrough: value.strikethrough,
             fg: value.color,
-            fg_transparent: value.fg_transparent,
             cursor_anchor: value.cursor_anchor,
             cursor_after: value.cursor_after,
             bg: value.bg,
@@ -75,7 +72,6 @@ impl Cell {
                 underline: false,
                 strikethrough: false,
                 fg: None,
-                fg_transparent: false,
                 cursor_anchor: false,
                 cursor_after: false,
                 bg: None,
@@ -154,10 +150,6 @@ impl CellBuffer {
         }
 
         let mut head_style = style;
-        if head_style.fg_transparent {
-            head_style.fg = head_style.bg.or(self.get(x, y).style.bg);
-            head_style.fg_transparent = false;
-        }
         if head_style.bg.is_none() {
             head_style.bg = self.get(x, y).style.bg;
         }
@@ -182,10 +174,6 @@ impl CellBuffer {
             let tail_x = x.saturating_add(1);
             if tail_x < self.width {
                 let mut tail_style = style;
-                if tail_style.fg_transparent {
-                    tail_style.fg = tail_style.bg.or(self.get(tail_x, y).style.bg);
-                    tail_style.fg_transparent = false;
-                }
                 if tail_style.bg.is_none() {
                     tail_style.bg = self.get(tail_x, y).style.bg;
                 }

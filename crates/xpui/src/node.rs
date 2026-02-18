@@ -252,7 +252,21 @@ impl TextInput {
         for (line_idx, line) in lines.iter().enumerate() {
             let mut styled_chars: Vec<(char, TextStyle)> = Vec::new();
             let chars: Vec<char> = line.chars().collect();
-            if self.focused && cursor_line == line_idx {
+            if line.is_empty() && self.value.is_empty() {
+                if let Some(placeholder) = &self.placeholder {
+                    for (idx, ch) in placeholder.chars().enumerate() {
+                        let style = if self.focused && idx == 0 {
+                            placeholder_style.clone().cursor_anchor(false)
+                        } else {
+                            placeholder_style.clone()
+                        };
+                        styled_chars.push((ch, style));
+                    }
+                }
+                if self.focused && styled_chars.is_empty() {
+                    styled_chars.push((' ', TextStyle::new().cursor_anchor(false)));
+                }
+            } else if self.focused && cursor_line == line_idx {
                 let col = cursor_col.min(chars.len());
                 if chars.is_empty() {
                     styled_chars.push((' ', TextStyle::new().cursor_anchor(false)));
@@ -273,12 +287,6 @@ impl TextInput {
                             TextStyle::default()
                         };
                         styled_chars.push((ch, style));
-                    }
-                }
-            } else if line.is_empty() && !self.focused && self.value.is_empty() {
-                if let Some(placeholder) = &self.placeholder {
-                    for ch in placeholder.chars() {
-                        styled_chars.push((ch, placeholder_style.clone()));
                     }
                 }
             } else {

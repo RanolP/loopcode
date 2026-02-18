@@ -218,7 +218,16 @@ impl StyleEmitter {
             return Ok(());
         }
 
-        if self.current.fg != target.fg {
+        let attrs_changed = self.current.bold != target.bold
+            || self.current.italic != target.italic
+            || self.current.underline != target.underline
+            || self.current.strikethrough != target.strikethrough;
+
+        if attrs_changed {
+            crossterm::queue!(out, SetAttribute(Attribute::Reset))?;
+        }
+
+        if attrs_changed || self.current.fg != target.fg {
             if let Some(color) = target.fg {
                 crossterm::queue!(
                     out,
@@ -233,7 +242,7 @@ impl StyleEmitter {
             }
         }
 
-        if self.current.bg != target.bg {
+        if attrs_changed || self.current.bg != target.bg {
             if let Some(bg) = target.bg {
                 crossterm::queue!(
                     out,
@@ -248,13 +257,7 @@ impl StyleEmitter {
             }
         }
 
-        let attrs_changed = self.current.bold != target.bold
-            || self.current.italic != target.italic
-            || self.current.underline != target.underline
-            || self.current.strikethrough != target.strikethrough;
-
         if attrs_changed {
-            crossterm::queue!(out, SetAttribute(Attribute::Reset))?;
             if target.bold {
                 crossterm::queue!(out, SetAttribute(Attribute::Bold))?;
             }

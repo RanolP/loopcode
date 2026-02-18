@@ -219,8 +219,6 @@ fn to_cpui_text_style(style: TextStyle) -> cpui::TextStyle {
     }
     if let Some(color) = style.color {
         out = out.color(to_cpui_color(color));
-    } else if style.fg_transparent {
-        out = out.color_transparent();
     }
     if let Some(bg) = style.bg {
         out = out.bg(to_cpui_color(bg));

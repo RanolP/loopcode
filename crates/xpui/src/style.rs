@@ -8,7 +8,6 @@ pub struct TextStyle {
     pub underline: bool,
     pub strikethrough: bool,
     pub color: Option<Rgb>,
-    pub fg_transparent: bool,
     pub cursor_anchor: bool,
     pub cursor_after: bool,
     pub bg: Option<Rgb>,
@@ -47,13 +46,6 @@ impl TextStyle {
 
     pub fn color(mut self, color: Rgb) -> Self {
         self.color = Some(color);
-        self.fg_transparent = false;
-        self
-    }
-
-    pub fn color_transparent(mut self) -> Self {
-        self.color = None;
-        self.fg_transparent = true;
         self
     }
 
