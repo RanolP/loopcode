@@ -77,6 +77,7 @@ pub struct TextInput {
     pub placeholder: Option<String>,
     pub cursor: usize,
     pub focused: bool,
+    pub visible_offset_lines: u16,
 }
 
 impl TextInput {
@@ -92,9 +93,11 @@ impl TextInput {
                     style: TextStyle::default(),
                 });
             }
-            let prefix = match row.line_number {
-                Some(line) => format!("{:>width$} | ", line, width = gutter_digits),
-                None => format!("{:>width$} | ", "", width = gutter_digits),
+            let show_idx = row.visible_label_row(self.visible_offset_lines as usize);
+            let prefix = if row.row_in_line == show_idx {
+                format!("{:>width$} | ", row.line_number, width = gutter_digits)
+            } else {
+                format!("{:>width$} | ", "", width = gutter_digits)
             };
             runs.push(TextRun {
                 text: prefix,
@@ -123,9 +126,38 @@ impl TextInput {
                     style: TextStyle::default(),
                 });
             }
-            let text = match row.line_number {
-                Some(line) => format!("{:>width$}", line, width = gutter_digits),
-                None => format!("{:>width$}", "", width = gutter_digits),
+            let show_idx = row.visible_label_row(self.visible_offset_lines as usize);
+            let text = if row.row_in_line == show_idx {
+                format!("{:>width$}", row.line_number, width = gutter_digits)
+            } else {
+                format!("{:>width$}", "", width = gutter_digits)
+            };
+            runs.push(TextRun {
+                text,
+                style: line_number_style.clone(),
+            });
+        }
+
+        RichText { runs }
+    }
+
+    pub fn to_wrapped_gutter_with_pipe_rich_text(&self, total_width: usize) -> RichText {
+        let line_number_style = TextStyle::new().color(Rgb(0x6e7681));
+        let mut runs = Vec::new();
+        let (gutter_digits, rows) = self.wrapped_rows(total_width.saturating_sub(3));
+
+        for row in rows {
+            if !runs.is_empty() {
+                runs.push(TextRun {
+                    text: "\n".to_string(),
+                    style: TextStyle::default(),
+                });
+            }
+            let show_idx = row.visible_label_row(self.visible_offset_lines as usize);
+            let text = if row.row_in_line == show_idx {
+                format!("{:>width$} | ", row.line_number, width = gutter_digits)
+            } else {
+                format!("{:>width$} | ", "", width = gutter_digits)
             };
             runs.push(TextRun {
                 text,
@@ -170,6 +202,7 @@ impl TextInput {
         };
 
         let mut out = Vec::new();
+        let mut global_row_index = 0usize;
         for (line_idx, line) in lines.iter().enumerate() {
             let mut styled_chars: Vec<(char, TextStyle)> = Vec::new();
             let chars: Vec<char> = line.chars().collect();
@@ -197,23 +230,17 @@ impl TextInput {
             }
 
             let wrapped = wrap_styled_chars(&styled_chars, content_width);
-            if wrapped.is_empty() {
-                out.push(WrappedRow {
-                    line_number: Some(line_idx + 1),
-                    content: Vec::new(),
-                });
-                continue;
-            }
+            let wrapped_len = wrapped.len().max(1);
 
             for (row_idx, row) in wrapped.into_iter().enumerate() {
                 out.push(WrappedRow {
-                    line_number: if row_idx == 0 {
-                        Some(line_idx + 1)
-                    } else {
-                        None
-                    },
+                    line_number: line_idx + 1,
+                    row_in_line: row_idx,
+                    line_rows: wrapped_len,
+                    global_row: global_row_index,
                     content: row,
                 });
+                global_row_index += 1;
             }
         }
         (gutter_digits, out)
@@ -222,8 +249,23 @@ impl TextInput {
 
 #[derive(Clone)]
 struct WrappedRow {
-    line_number: Option<usize>,
+    line_number: usize,
+    row_in_line: usize,
+    line_rows: usize,
+    global_row: usize,
     content: Vec<(char, TextStyle)>,
+}
+
+impl WrappedRow {
+    fn visible_label_row(&self, offset: usize) -> usize {
+        let line_start = self.global_row.saturating_sub(self.row_in_line);
+        let line_end = line_start.saturating_add(self.line_rows);
+        if (line_start..line_end).contains(&offset) {
+            offset - line_start
+        } else {
+            0
+        }
+    }
 }
 
 fn cursor_line_col(value: &str, cursor: usize) -> (usize, usize) {

@@ -183,7 +183,7 @@ impl xpui::UiApp for DemoApp {
         let input_container_focused = self.is_input_container_focused();
         let scroll_focused = self.is_scroll_focused();
         let dynamic_input_max = ((self.window_size.height * 0.20).floor() as u16).max(5);
-        let input_wrap_width = (self.window_size.width as usize).saturating_sub(2).max(8);
+        let input_wrap_width = (self.window_size.width as usize).max(8);
         let (input_visual_lines, cursor_line) = self.input_visual_metrics(input_wrap_width);
         let input_viewport_lines = input_visual_lines.clamp(1, dynamic_input_max);
         let input_offset_lines = cursor_line
@@ -246,7 +246,8 @@ impl xpui::UiApp for DemoApp {
                             xpui::text_input_from_state(&self.input)
                                 .placeholder("여기에 입력...")
                                 .focus(xpui::FocusId(Self::INPUT_ID))
-                                .focused(input_focused),
+                                .focused(input_focused)
+                                .visible_offset_lines(input_offset_lines),
                         )
                         .viewport_lines(input_viewport_lines)
                         .offset_lines(input_offset_lines),
@@ -283,6 +284,12 @@ impl xpui::UiApp for DemoApp {
     }
 
     fn on_input(&mut self, event: xpui::UiInputEvent) {
+        let line_count = self.input.value().split('\n').count().max(1);
+        let gutter_digits = line_count.to_string().len();
+        let input_total_width = (self.window_size.width as usize).max(8);
+        let input_content_width = input_total_width.saturating_sub(gutter_digits + 3).max(1);
+        self.input.set_soft_wrap_width(Some(input_content_width));
+
         if self.is_input_focused()
             && matches!(event, xpui::UiInputEvent::Key(xpui::UiKeyInput::Submit))
         {
