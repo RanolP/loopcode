@@ -2,7 +2,7 @@ use std::{
     any::{Any, TypeId},
     cell::RefCell,
     collections::HashMap,
-    io,
+    io::{self, Write},
     marker::PhantomData,
     rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
@@ -11,10 +11,12 @@ use std::{
 
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
-    MouseEventKind,
+    KeyboardEnhancementFlags, MouseEventKind, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
-use crossterm::terminal;
+use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::{cursor, terminal::Clear, terminal::ClearType};
 
 use crate::{
     context::{AppContext, Context, Focusable, Global, GpuiBorrow, Reservation, VisualContext},
@@ -27,6 +29,11 @@ use crate::{
 
 static NEXT_ENTITY_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_WINDOW_ID: AtomicU64 = AtomicU64::new(1);
+const KEYBOARD_FLAGS: KeyboardEnhancementFlags =
+    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        .union(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
+        .union(KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS)
+        .union(KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES);
 
 trait WindowRenderer {
     fn render(&self, app: &mut App, window: &mut Window) -> io::Result<()>;
@@ -414,11 +421,12 @@ impl Application {
             eprintln!("cpui raw mode error: {err}");
             return;
         }
-        if let Err(err) = execute!(io::stdout(), EnableMouseCapture) {
+        if let Err(err) = execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture) {
             eprintln!("cpui mouse capture error: {err}");
             let _ = terminal::disable_raw_mode();
             return;
         }
+        let _ = execute!(io::stdout(), PushKeyboardEnhancementFlags(KEYBOARD_FLAGS));
         let _terminal_guard = TerminalGuard;
 
         if let Err(err) = app.render_all_windows() {
@@ -429,6 +437,13 @@ impl Application {
         loop {
             if let Ok(true) = event::poll(Duration::from_millis(250)) {
                 if let Ok(raw) = event::read() {
+                    if matches!(raw, Event::Resize(_, _)) {
+                        if let Err(err) = app.render_all_windows() {
+                            eprintln!("cpui render error: {err}");
+                            break;
+                        }
+                        continue;
+                    }
                     if let Some(input) = map_input_event(raw) {
                         if on_input(&mut app, input) {
                             break;
@@ -449,22 +464,38 @@ struct TerminalGuard;
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = execute!(io::stdout(), DisableMouseCapture);
+        let mut out = io::stdout();
+        let _ = execute!(out, Clear(ClearType::All), cursor::MoveTo(0, 0));
+        let _ = execute!(
+            out,
+            PopKeyboardEnhancementFlags,
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        );
         let _ = terminal::disable_raw_mode();
+        let _ = execute!(
+            out,
+            Clear(ClearType::Purge),
+            Clear(ClearType::All),
+            cursor::MoveTo(0, 0)
+        );
+        let _ = writeln!(out, "good bye!");
+        let _ = out.flush();
     }
 }
 
 fn map_input_event(event: Event) -> Option<InputEvent> {
     match event {
         Event::Key(key) if key.kind == KeyEventKind::Press => {
-            let secondary = key
+            let word_modifier = key
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER);
+            let submit_modifier = key.modifiers.contains(KeyModifiers::ALT);
             match key.code {
                 KeyCode::Tab => Some(InputEvent::Key(KeyInput::Tab)),
                 KeyCode::BackTab => Some(InputEvent::Key(KeyInput::BackTab)),
-                KeyCode::Left if secondary => Some(InputEvent::Key(KeyInput::WordLeft)),
-                KeyCode::Right if secondary => Some(InputEvent::Key(KeyInput::WordRight)),
+                KeyCode::Left if word_modifier => Some(InputEvent::Key(KeyInput::WordLeft)),
+                KeyCode::Right if word_modifier => Some(InputEvent::Key(KeyInput::WordRight)),
                 KeyCode::Left => Some(InputEvent::Key(KeyInput::Left)),
                 KeyCode::Right => Some(InputEvent::Key(KeyInput::Right)),
                 KeyCode::Up => Some(InputEvent::Key(KeyInput::Up)),
@@ -473,17 +504,15 @@ fn map_input_event(event: Event) -> Option<InputEvent> {
                 KeyCode::PageDown => Some(InputEvent::Key(KeyInput::PageDown)),
                 KeyCode::Home => Some(InputEvent::Key(KeyInput::Home)),
                 KeyCode::End => Some(InputEvent::Key(KeyInput::End)),
-                KeyCode::Backspace if secondary => Some(InputEvent::Key(KeyInput::BackspaceWord)),
+                KeyCode::Backspace if word_modifier => {
+                    Some(InputEvent::Key(KeyInput::BackspaceWord))
+                }
                 KeyCode::Backspace => Some(InputEvent::Key(KeyInput::Backspace)),
-                KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Char('w' | 'W') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     Some(InputEvent::Key(KeyInput::BackspaceWord))
                 }
                 KeyCode::Delete => Some(InputEvent::Key(KeyInput::Delete)),
-                KeyCode::Enter if secondary => Some(InputEvent::Key(KeyInput::Submit)),
-                // Many terminals do not expose Ctrl+Enter distinctly and send Ctrl+J/Ctrl+M instead.
-                KeyCode::Char('j' | 'm') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    Some(InputEvent::Key(KeyInput::Submit))
-                }
+                KeyCode::Enter if submit_modifier => Some(InputEvent::Key(KeyInput::Submit)),
                 KeyCode::Enter => Some(InputEvent::Key(KeyInput::Enter)),
                 KeyCode::Esc => Some(InputEvent::Key(KeyInput::Esc)),
                 KeyCode::Char(ch) => Some(InputEvent::Key(KeyInput::Char(ch))),

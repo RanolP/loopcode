@@ -158,9 +158,8 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
 #[cfg(feature = "backend-gpui")]
 fn map_gpui_key_event(event: &gpui::KeyDownEvent) -> Option<UiKeyInput> {
     let secondary = event.keystroke.modifiers.secondary();
-    let is_submit =
-        (secondary || event.keystroke.modifiers.control || event.keystroke.modifiers.platform)
-            && matches!(event.keystroke.key.as_str(), "enter" | "return");
+    let alt = event.keystroke.modifiers.alt;
+    let is_submit = alt && matches!(event.keystroke.key.as_str(), "enter" | "return");
     if is_submit {
         return Some(UiKeyInput::Submit);
     }

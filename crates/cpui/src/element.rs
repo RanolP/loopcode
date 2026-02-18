@@ -441,6 +441,14 @@ pub(crate) fn render_element(
         &mut parents,
         &mut scroll_nodes,
     )?;
+    let mut root_style = taffy.style(root).map_err(io::Error::other)?.clone();
+    root_style.size = Size {
+        width: Dimension::Length(terminal_width as f32),
+        height: Dimension::Length(terminal_height as f32),
+    };
+    taffy
+        .set_style(root, root_style)
+        .map_err(io::Error::other)?;
 
     taffy
         .compute_layout(

@@ -113,6 +113,10 @@ impl Window {
         self.id
     }
 
+    pub fn terminal_size(&self) -> io::Result<(u16, u16)> {
+        terminal::size()
+    }
+
     pub(crate) fn draw(&mut self, element: &AnyElement) -> io::Result<()> {
         let mut out = io::stdout();
         execute!(out, Clear(ClearType::All), cursor::MoveTo(0, 0))?;

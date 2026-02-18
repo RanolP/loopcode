@@ -35,9 +35,15 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
     impl<A: UiApp + 'static> cpui::Render for Host<A> {
         fn render(
             &mut self,
-            _window: &mut cpui::Window,
+            window: &mut cpui::Window,
             _cx: &mut cpui::Context<'_, Self>,
         ) -> impl cpui::IntoElement {
+            if let Ok((w, h)) = window.terminal_size() {
+                self.window_size = WindowSize {
+                    width: w as f32,
+                    height: h as f32,
+                };
+            }
             self.app.set_window_size(self.window_size);
             let node = self.app.render();
 

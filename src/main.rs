@@ -1,5 +1,6 @@
 use clap::Parser;
 use unicode_width::UnicodeWidthChar;
+use unicode_width::UnicodeWidthStr;
 use xpui::IntoNode;
 
 #[derive(Parser, Debug)]
@@ -16,6 +17,7 @@ struct DemoApp {
     focus: xpui::FocusState,
     input: xpui::TextInputState,
     messages: Vec<String>,
+    selected_model: String,
 }
 
 impl DemoApp {
@@ -47,6 +49,7 @@ impl DemoApp {
             focus,
             input: xpui::TextInputState::default(),
             messages,
+            selected_model: "gpt-4.1".to_string(),
         }
     }
 
@@ -164,6 +167,48 @@ impl DemoApp {
         self.recalc_history_heights();
         self.input.set_value("");
     }
+
+    fn bottom_bar_text(
+        &self,
+        width: usize,
+        input_focused: bool,
+        input_container_focused: bool,
+        scroll_focused: bool,
+    ) -> String {
+        let usage_top = if input_focused {
+            "Alt+Enter send • Enter newline • Esc exit input"
+        } else if input_container_focused {
+            "Enter edit input • Down move to history • Esc step out"
+        } else if scroll_focused {
+            "Enter focus item • Up/Down/Page scroll • Esc step out"
+        } else {
+            "Up/Down move • Enter enter child • Esc step out"
+        };
+        let usage_mid = "Tab/Shift+Tab focus • Esc x2 on root quits";
+        let usage_bot = if input_focused {
+            "Focus: Input"
+        } else if input_container_focused {
+            "Focus: Input container"
+        } else if scroll_focused {
+            "Focus: History scroll"
+        } else {
+            "Focus: History item"
+        };
+        let model = format!("Model: {}", self.selected_model);
+        let line1 = Self::left_right_line(usage_top, &model, width);
+
+        format!("{line1}\n{usage_mid}\n{usage_bot}")
+    }
+
+    fn left_right_line(left: &str, right: &str, width: usize) -> String {
+        let left_w = left.width();
+        let right_w = right.width();
+        if left_w + right_w + 1 > width {
+            return format!("{left} {right}");
+        }
+        let spaces = width - left_w - right_w;
+        format!("{left}{}{right}", " ".repeat(spaces))
+    }
 }
 
 impl xpui::UiApp for DemoApp {
@@ -263,9 +308,12 @@ impl xpui::UiApp for DemoApp {
                 )
                 .child(
                     xpui::container(
-                        xpui::scroll_view(xpui::text(
-                            "Bottom Bar\nEsc: step out (outermost double-press quits)\nEnter: enter child focus",
-                        ))
+                        xpui::scroll_view(xpui::text(self.bottom_bar_text(
+                            self.window_size.width as usize,
+                            input_focused,
+                            input_container_focused,
+                            scroll_focused,
+                        )))
                         .viewport_lines(3),
                     )
                     .style(
