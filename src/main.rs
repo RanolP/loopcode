@@ -397,7 +397,8 @@ impl xpui::UiApp for DemoApp {
             .saturating_add(1)
             .saturating_sub(input_viewport_lines);
         let terminal_lines = (self.window_size.height as u16).max(1);
-        let reserved_without_history = 15u16.saturating_add(input_viewport_lines);
+        // input(1 block) + help(2) + status(1) + vertical gaps(3)
+        let reserved_without_history = 6u16.saturating_add(input_viewport_lines);
         let history_viewport_lines = terminal_lines.saturating_sub(reserved_without_history).max(3);
         self.nav.list.set_viewport_lines(history_viewport_lines);
         if should_scroll_to_bottom {
@@ -423,7 +424,6 @@ impl xpui::UiApp for DemoApp {
         xpui::container(
             xpui::column()
                 .gap(1)
-                .child(xpui::text("Chat history"))
                 .child(
                     xpui::container(
                         xpui::scroll_view(list)

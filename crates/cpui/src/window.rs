@@ -10,7 +10,7 @@ use crossterm::{
         Attribute, Color as TermColor, Print, ResetColor, SetAttribute, SetBackgroundColor,
         SetForegroundColor,
     },
-    terminal::{self, BeginSynchronizedUpdate, EndSynchronizedUpdate},
+    terminal::{self, BeginSynchronizedUpdate, Clear, ClearType, EndSynchronizedUpdate},
 };
 
 use crate::{
@@ -143,11 +143,18 @@ impl Window {
         crossterm::queue!(out, BeginSynchronizedUpdate)?;
         let (w, h) = terminal::size()?;
         let current = crate::element::render_element(element, w, h)?;
+        let mut resized = false;
         let prev = self
             .prev_frame
             .take()
+            .inspect(|frame| {
+                resized = frame.width() != w || frame.height() != h;
+            })
             .filter(|frame| frame.width() == w && frame.height() == h)
             .unwrap_or_else(|| CellBuffer::new(w, h));
+        if resized {
+            crossterm::queue!(out, Clear(ClearType::All), cursor::MoveTo(0, 0))?;
+        }
         flush_diff(&mut out, &prev, &current)?;
         if self.terminal_focused {
             if let Some((cx, cy)) = current.cursor() {

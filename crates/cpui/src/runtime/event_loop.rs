@@ -1,4 +1,7 @@
-use std::{io, time::Duration};
+use std::{
+    io,
+    time::{Duration, Instant},
+};
 
 use crossterm::event::{self, Event};
 
@@ -10,7 +13,14 @@ pub(crate) fn run_event_loop<H>(app: &mut App, on_input: &mut H) -> io::Result<(
 where
     H: FnMut(&mut App, InputEvent) -> bool,
 {
+    const RESIZE_DEBOUNCE: Duration = Duration::from_millis(120);
+    let mut pending_resize_at: Option<Instant> = None;
+
     loop {
+        if flush_debounced_resize(app, &mut pending_resize_at, RESIZE_DEBOUNCE)? {
+            continue;
+        }
+
         match event::poll(Duration::from_millis(250)) {
             Ok(true) => {
                 let Ok(raw) = event::read() else {
@@ -18,16 +28,20 @@ where
                 };
                 if matches!(raw, Event::FocusGained) {
                     app.set_terminal_focus(true);
-                    app.render_all_windows()?;
+                    if pending_resize_at.is_none() {
+                        app.render_all_windows()?;
+                    }
                     continue;
                 }
                 if matches!(raw, Event::FocusLost) {
                     app.set_terminal_focus(false);
-                    app.render_all_windows()?;
+                    if pending_resize_at.is_none() {
+                        app.render_all_windows()?;
+                    }
                     continue;
                 }
                 if matches!(raw, Event::Resize(_, _)) {
-                    app.render_all_windows()?;
+                    pending_resize_at = Some(Instant::now());
                     continue;
                 }
                 if let Some(input) = map_input_event(raw) {
@@ -35,18 +49,37 @@ where
                     if on_input(app, input) {
                         break;
                     }
-                    app.render_all_windows()?;
+                    if pending_resize_at.is_none() {
+                        app.render_all_windows()?;
+                    }
                 }
             }
             Ok(false) => {
                 if on_input(app, InputEvent::Tick) {
                     break;
                 }
-                app.render_all_windows()?;
+                if pending_resize_at.is_none() {
+                    app.render_all_windows()?;
+                }
             }
             Err(_) => continue,
         }
     }
 
     Ok(())
+}
+
+fn flush_debounced_resize(
+    app: &mut App,
+    pending_resize_at: &mut Option<Instant>,
+    debounce: Duration,
+) -> io::Result<bool> {
+    if let Some(at) = *pending_resize_at
+        && at.elapsed() >= debounce
+    {
+        app.render_all_windows()?;
+        *pending_resize_at = None;
+        return Ok(true);
+    }
+    Ok(false)
 }
