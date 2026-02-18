@@ -105,10 +105,7 @@ pub(crate) fn run_cpui<A: UiApp + 'static>(app: A, size: WindowSize) {
                 match nav_outcome {
                     FocusNavOutcome::Ignored => host.app.on_input(event),
                     FocusNavOutcome::Handled => {}
-                    FocusNavOutcome::RequestQuit => {
-                        append_focus_debug_line("[cpui nav] RequestQuit");
-                        should_quit = true;
-                    }
+                    FocusNavOutcome::RequestQuit => should_quit = true,
                 }
             });
 
@@ -241,16 +238,5 @@ fn from_cpui_input(event: cpui::InputEvent) -> Option<UiInputEvent> {
         }
         cpui::InputEvent::ScrollLines(lines) => Some(UiInputEvent::ScrollLines(lines)),
         cpui::InputEvent::AltScreenActive => Some(UiInputEvent::AltScreenActive),
-    }
-}
-
-fn append_focus_debug_line(line: &str) {
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/loopcode_focus_debug.log")
-    {
-        let _ = std::io::Write::write_all(&mut f, line.as_bytes());
-        let _ = std::io::Write::write_all(&mut f, b"\n");
     }
 }

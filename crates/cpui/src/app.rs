@@ -424,8 +424,6 @@ impl Application {
             return;
         }
 
-        let _ = std::fs::write("/tmp/loopcode_focus_debug.log", "");
-
         if let Err(err) = terminal::enable_raw_mode() {
             eprintln!("cpui raw mode error: {err}");
             return;
@@ -502,12 +500,6 @@ impl Drop for TerminalGuard {
 fn map_input_event(event: Event) -> Option<InputEvent> {
     match event {
         Event::Key(key) if key.kind == KeyEventKind::Press => {
-            if matches!(key.code, KeyCode::Esc) {
-                append_focus_debug_line(&format!(
-                    "[cpui key] code=Esc modifiers={:?} kind={:?}",
-                    key.modifiers, key.kind
-                ));
-            }
             let word_modifier = key
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER);
@@ -536,10 +528,6 @@ fn map_input_event(event: Event) -> Option<InputEvent> {
                 KeyCode::Enter if submit_modifier => Some(InputEvent::Key(KeyInput::Submit)),
                 KeyCode::Enter => Some(InputEvent::Key(KeyInput::Enter)),
                 KeyCode::Char('c' | 'C') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    append_focus_debug_line(&format!(
-                        "[cpui key] code=Ctrl+C modifiers={:?} kind={:?}",
-                        key.modifiers, key.kind
-                    ));
                     Some(InputEvent::Key(KeyInput::Interrupt))
                 }
                 KeyCode::Esc => Some(InputEvent::Key(KeyInput::Esc)),
@@ -553,16 +541,5 @@ fn map_input_event(event: Event) -> Option<InputEvent> {
             _ => None,
         },
         _ => None,
-    }
-}
-
-fn append_focus_debug_line(line: &str) {
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/loopcode_focus_debug.log")
-    {
-        let _ = std::io::Write::write_all(&mut f, line.as_bytes());
-        let _ = std::io::Write::write_all(&mut f, b"\n");
     }
 }
