@@ -1,7 +1,7 @@
 use crate::{
     backend::Backend,
     node::{Axis, Node, RichText},
-    runtime::{UiApp, UiInputEvent, UiKeyInput, WindowSize},
+    runtime::{FocusEntry, FocusKind, UiApp, UiInputEvent, UiKeyInput, WindowSize},
 };
 
 pub trait GpuiAdapter {
@@ -37,10 +37,11 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
 
     struct Host<A> {
         app: A,
-        focus_order: Vec<crate::FocusId>,
+        focus_order: Vec<FocusEntry>,
         root_focus: gpui::FocusHandle,
         wheel_line_carry: f32,
         window_size: WindowSize,
+        esc_armed: bool,
     }
 
     impl<A: UiApp + 'static> Render for Host<A> {
@@ -52,7 +53,7 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
 
             let node = self.app.render();
             let mut focus_order = Vec::new();
-            node.collect_focus_ids(&mut focus_order);
+            node.collect_focus_entries(&mut focus_order);
             self.focus_order = focus_order.clone();
             if let Some(focus) = self.app.focus_state() {
                 focus.ensure_valid(&focus_order);
@@ -63,6 +64,7 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
                 .font_family("DejaVu Sans")
                 .track_focus(&self.root_focus)
                 .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                    let mut handled = false;
                     if event.keystroke.key == "tab" {
                         if let Some(focus) = this.app.focus_state() {
                             if event.keystroke.modifiers.shift {
@@ -70,14 +72,74 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
                             } else {
                                 focus.focus_next(&this.focus_order);
                             }
+                            handled = true;
                         }
-                        cx.notify();
-                        window.refresh();
-                        return;
                     }
 
-                    if let Some(mapped) = map_gpui_key_event(event) {
+                    if !handled
+                        && matches!(
+                            event.keystroke.key.as_str(),
+                            "left" | "up" | "right" | "down"
+                        )
+                    {
+                        if let Some(focus) = this.app.focus_state() {
+                            let is_text_input = focus
+                                .focused_entry(&this.focus_order)
+                                .is_some_and(|entry| entry.kind == FocusKind::TextInput);
+                            if !is_text_input {
+                                handled = match event.keystroke.key.as_str() {
+                                    "left" | "up" => {
+                                        focus.focus_prev_sibling(&this.focus_order)
+                                            || focus.focus_prev_peer_branch(&this.focus_order)
+                                    }
+                                    "right" | "down" => {
+                                        focus.focus_next_sibling(&this.focus_order)
+                                            || focus.focus_next_peer_branch(&this.focus_order)
+                                    }
+                                    _ => false,
+                                };
+                            }
+                        }
+                    }
+
+                    if !handled && event.keystroke.key == "enter" {
+                        if let Some(focus) = this.app.focus_state() {
+                            let is_text_input = focus
+                                .focused_entry(&this.focus_order)
+                                .is_some_and(|entry| entry.kind == FocusKind::TextInput);
+                            if !is_text_input {
+                                handled = focus.focus_first_child(&this.focus_order);
+                            }
+                        }
+                    }
+
+                    if !handled && event.keystroke.key == "escape" {
+                        if let Some(focus) = this.app.focus_state() {
+                            if focus.focus_parent(&this.focus_order) {
+                                this.esc_armed = false;
+                            } else if this.esc_armed {
+                                cx.quit();
+                            } else {
+                                this.esc_armed = true;
+                            }
+                        } else if this.esc_armed {
+                            cx.quit();
+                        } else {
+                            this.esc_armed = true;
+                        }
+                        handled = true;
+                    }
+
+                    if !handled {
+                        this.esc_armed = false;
+                    }
+
+                    if !handled && let Some(mapped) = map_gpui_key_event(event) {
                         this.app.on_input(UiInputEvent::Key(mapped));
+                        handled = true;
+                    }
+
+                    if handled {
                         cx.notify();
                         window.refresh();
                     }
@@ -133,6 +195,7 @@ pub(crate) fn run_gpui<A: UiApp + 'static>(app: A, _size: WindowSize) {
                 root_focus: cx.focus_handle(),
                 wheel_line_carry: 0.0,
                 window_size: _size,
+                esc_armed: false,
             })
         });
         cx.activate(true);

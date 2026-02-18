@@ -1,4 +1,7 @@
-use crate::style::{BoxStyle, Rgb, TextStyle};
+use crate::{
+    runtime::{FocusEntry, FocusKind, FocusPath},
+    style::{BoxStyle, Rgb, TextStyle},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FocusId(pub u64);
@@ -287,27 +290,56 @@ impl IntoNode for Node {
 
 impl Node {
     pub fn collect_focus_ids(&self, out: &mut Vec<FocusId>) {
+        let mut entries = Vec::new();
+        self.collect_focus_entries(&mut entries);
+        out.extend(entries.into_iter().map(|entry| entry.id));
+    }
+
+    pub fn collect_focus_entries(&self, out: &mut Vec<FocusEntry>) {
+        let mut path = Vec::new();
+        self.collect_focus_entries_inner(out, &mut path);
+    }
+
+    fn collect_focus_entries_inner(&self, out: &mut Vec<FocusEntry>, path: &mut Vec<usize>) {
         match self {
             Node::Stack(stack) => {
-                for child in &stack.children {
-                    child.collect_focus_ids(out);
+                for (i, child) in stack.children.iter().enumerate() {
+                    path.push(i);
+                    child.collect_focus_entries_inner(out, path);
+                    path.pop();
                 }
             }
             Node::Container(container) => {
                 if let Some(id) = container.focus_id {
-                    out.push(id);
+                    out.push(FocusEntry {
+                        id,
+                        path: FocusPath(path.clone()),
+                        kind: FocusKind::Generic,
+                    });
                 }
-                container.child.collect_focus_ids(out);
+                path.push(0);
+                container.child.collect_focus_entries_inner(out, path);
+                path.pop();
             }
             Node::ScrollView(scroll) => {
                 if let Some(id) = scroll.focus_id {
-                    out.push(id);
+                    out.push(FocusEntry {
+                        id,
+                        path: FocusPath(path.clone()),
+                        kind: FocusKind::Generic,
+                    });
                 }
-                scroll.child.collect_focus_ids(out);
+                path.push(0);
+                scroll.child.collect_focus_entries_inner(out, path);
+                path.pop();
             }
             Node::TextInput(input) => {
                 if let Some(id) = input.focus_id {
-                    out.push(id);
+                    out.push(FocusEntry {
+                        id,
+                        path: FocusPath(path.clone()),
+                        kind: FocusKind::TextInput,
+                    });
                 }
             }
             Node::RichText(_) | Node::Empty => {}

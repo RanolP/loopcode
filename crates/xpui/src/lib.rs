@@ -11,8 +11,8 @@ pub use backends::CpuiBackend;
 pub use backends::{GpuiAdapter, GpuiBackend};
 pub use node::{Axis, FocusId, IntoNode, Node, RichText, ScrollView, TextInput, TextRun};
 pub use runtime::{
-    FocusListState, FocusState, TextInputState, UiApp, UiInputEvent, UiKeyInput, WindowSize,
-    run_gpui, run_gpui_with_size,
+    FocusEntry, FocusKind, FocusListState, FocusPath, FocusState, TextInputState, UiApp,
+    UiInputEvent, UiKeyInput, WindowSize, run_gpui, run_gpui_with_size,
 };
 #[cfg(feature = "backend-cpui")]
 pub use runtime::{run_cpui, run_cpui_with_size};

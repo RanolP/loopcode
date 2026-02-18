@@ -15,7 +15,10 @@ struct DemoApp {
 }
 
 impl DemoApp {
+    const INPUT_CONTAINER_ID: u64 = 10;
     const INPUT_ID: u64 = 1;
+    const SCROLL_CONTAINER_ID: u64 = 20;
+    const SCROLL_ID: u64 = 2;
     const ITEM_GAP_LINES: u16 = 1;
     const FIRST_ITEM_ID: u64 = 1000;
 
@@ -54,6 +57,15 @@ impl DemoApp {
         self.focus.focused() == Some(xpui::FocusId(Self::INPUT_ID))
     }
 
+    fn is_input_container_focused(&self) -> bool {
+        self.focus.focused() == Some(xpui::FocusId(Self::INPUT_CONTAINER_ID))
+    }
+
+    fn is_scroll_focused(&self) -> bool {
+        self.focus.focused() == Some(xpui::FocusId(Self::SCROLL_CONTAINER_ID))
+            || self.focus.focused() == Some(xpui::FocusId(Self::SCROLL_ID))
+    }
+
     fn item_line_height(index: u16) -> u16 {
         if index % 7 == 0 {
             3
@@ -72,8 +84,10 @@ impl xpui::UiApp for DemoApp {
         }
 
         let max_offset = self.list.max_scroll_offset();
-        let focused = Some(self.list.focused_index());
+        let focused = self.focused_index();
         let input_focused = self.is_input_focused();
+        let input_container_focused = self.is_input_container_focused();
+        let scroll_focused = self.is_scroll_focused();
 
         let mut list = xpui::column().gap(Self::ITEM_GAP_LINES as u8);
         for i in 0..self.list.item_count() {
@@ -126,7 +140,8 @@ impl xpui::UiApp for DemoApp {
                             .focus(xpui::FocusId(Self::INPUT_ID))
                             .focused(input_focused),
                     )
-                    .style(if input_focused {
+                    .focus(xpui::FocusId(Self::INPUT_CONTAINER_ID))
+                    .style(if input_focused || input_container_focused {
                         xpui::BoxStyle::default()
                             .bg(xpui::rgb(0x1f2a36))
                             .text_color(xpui::rgb(0xb3e3ff))
@@ -141,9 +156,19 @@ impl xpui::UiApp for DemoApp {
                     self.list.viewport_lines()
                 )))
                 .child(
-                    xpui::scroll_view(list)
-                        .viewport_lines(self.list.viewport_lines())
-                        .offset_lines(self.list.scroll_offset()),
+                    xpui::container(
+                        xpui::scroll_view(list)
+                            .viewport_lines(self.list.viewport_lines())
+                            .offset_lines(self.list.scroll_offset()),
+                    )
+                    .focus(xpui::FocusId(Self::SCROLL_CONTAINER_ID))
+                    .style(if scroll_focused {
+                        xpui::BoxStyle::default()
+                            .bg(xpui::rgb(0x1f2a36))
+                            .text_color(xpui::rgb(0xb3e3ff))
+                    } else {
+                        xpui::BoxStyle::default()
+                    }),
                 ),
         )
         .style(
