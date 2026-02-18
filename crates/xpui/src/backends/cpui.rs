@@ -261,6 +261,7 @@ fn from_cpui_input(event: cpui::InputEvent) -> Option<UiInputEvent> {
             Some(UiInputEvent::Key(mapped))
         }
         cpui::InputEvent::ScrollLines(lines) => Some(UiInputEvent::ScrollLines(lines)),
+        cpui::InputEvent::MouseDown { x, y } => Some(UiInputEvent::MouseDown { x, y }),
         cpui::InputEvent::Tick => Some(UiInputEvent::Tick),
     }
 }

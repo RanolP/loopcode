@@ -26,11 +26,11 @@ impl AgentMode {
         }
     }
 
-    fn label(self) -> &'static str {
+    fn title(self) -> &'static str {
         match self {
-            Self::Safe => "safe",
-            Self::Autonomous => "autonomous",
-            Self::Jailbreaking => "jailbreaking",
+            Self::Safe => "Safest",
+            Self::Autonomous => "Autonomous",
+            Self::Jailbreaking => "Jailbreak",
         }
     }
 }
@@ -54,7 +54,7 @@ impl ChatState {
         Self {
             input: xpui::TextInputState::default(),
             history,
-            selected_model: xpui::signal::Signal::from("gpt-4.1".to_string()),
+            selected_model: xpui::signal::Signal::from("OpenRouter GPT-4.1".to_string()),
             history_heights_memo: xpui::signal::Memo::new(),
         }
     }
@@ -146,6 +146,7 @@ struct DemoApp {
     is_vscode_terminal: bool,
     current_dir: String,
     mode: AgentMode,
+    input_scroll_offset: u16,
 }
 
 impl DemoApp {
@@ -179,6 +180,7 @@ impl DemoApp {
                 .and_then(|p| p.to_str().map(|s| s.to_string()))
                 .unwrap_or_else(|| ".".to_string()),
             mode: AgentMode::Safe,
+            input_scroll_offset: 0,
         }
     }
 
@@ -205,6 +207,7 @@ impl DemoApp {
         let mut total_visual = 0u16;
         let mut cursor_visual = 0u16;
         let mut cursor_left = self.chat.input.cursor();
+        let mut cursor_found = false;
 
         for line in lines {
             let mut wraps = 1u16;
@@ -220,7 +223,7 @@ impl DemoApp {
                 line_chars += 1;
             }
 
-            if cursor_left <= line_chars {
+            if !cursor_found && cursor_left <= line_chars {
                 let mut ccol = 0usize;
                 let mut cwrap = 0u16;
                 for ch in line.chars().take(cursor_left) {
@@ -232,7 +235,7 @@ impl DemoApp {
                     ccol = ccol.saturating_add(w);
                 }
                 cursor_visual = total_visual.saturating_add(cwrap);
-                return (total_visual.saturating_add(wraps), cursor_visual);
+                cursor_found = true;
             }
 
             cursor_left = cursor_left.saturating_sub(line_chars.saturating_add(1));
@@ -298,21 +301,18 @@ impl DemoApp {
             }
         } else if input_container_focused {
             vec![
-                ("Enter", "edit input"),
-                ("Down", "move to history"),
-                ("Esc", "step out"),
+                ("Enter", "focus input"),
+                ("Up", "see history"),
             ]
         } else if scroll_focused {
             vec![
-                ("Enter", "focus item"),
-                ("Up/Down", "scroll"),
-                ("Esc", "step out"),
+                ("Enter", "focus and scroll"),
+                ("Down", "return to input"),
             ]
         } else {
             vec![
-                ("Up/Down", "move item"),
-                ("Enter", "select item"),
-                ("Esc", "step out"),
+                ("Up/Down", "navigate"),
+                ("Esc", "return to chat list"),
             ]
         }
     }
@@ -325,19 +325,25 @@ impl DemoApp {
         scroll_focused: bool,
     ) -> xpui::Node {
         let parts = self.usage_top_parts(input_focused, input_container_focused, scroll_focused);
+        let (provider, model_name) = self.selected_model_parts();
         let usage_top_plain = parts
             .iter()
             .map(|(k, a)| format!("{k} {a}"))
             .collect::<Vec<_>>()
             .join(" • ");
-        let usage_mid = if self.nav.focus.quit_armed() {
+        let usage_mid_left = if self.nav.focus.quit_armed() {
             "Press Ctrl+C again to quit"
         } else {
-            "Use arrows / Enter / Esc"
+            ""
         };
-        let model = format!("Model: {}", self.chat.selected_model.borrow());
+        let usage_mid_right = "45% used · $0.21";
+        let model_plain = if model_name.is_empty() {
+            provider.clone()
+        } else {
+            format!("{provider} {model_name}")
+        };
         let left_w = usage_top_plain.width();
-        let right_w = model.width();
+        let right_w = model_plain.width();
         let spaces = if left_w + right_w + 1 > width {
             1
         } else {
@@ -347,6 +353,10 @@ impl DemoApp {
         let key_style = xpui::TextStyle::new().color(xpui::rgb(0xa3afbf));
         let action_style = xpui::TextStyle::new().color(xpui::rgb(0x7f8a9a));
         let dot_style = xpui::TextStyle::new().color(xpui::rgb(0x596272));
+        let provider_style = xpui::TextStyle::new().color(xpui::rgb(0x8b949e));
+        let name_style = xpui::TextStyle::new().color(xpui::rgb(0xc9d1d9));
+        let usage_left_style = xpui::TextStyle::new().color(xpui::rgb(0x7f8a9a));
+        let usage_right_style = xpui::TextStyle::new().color(xpui::rgb(0x8b949e));
 
         let mut line1 = xpui::text("");
         for (i, (key, action)) in parts.iter().enumerate() {
@@ -359,15 +369,49 @@ impl DemoApp {
                 .run(*action, action_style.clone());
         }
         line1 = line1.run(" ".repeat(spaces), xpui::TextStyle::new());
-        line1 = line1.run(model, xpui::TextStyle::new());
+        line1 = line1.run(provider, provider_style);
+        if !model_name.is_empty() {
+            line1 = line1.run(" ", xpui::TextStyle::new());
+            line1 = line1.run(model_name, name_style);
+        }
+
+        let mid_left_w = usage_mid_left.width();
+        let mid_right_w = usage_mid_right.width();
+        let mid_spaces = if mid_left_w + mid_right_w + 1 > width {
+            1
+        } else {
+            width - mid_left_w - mid_right_w
+        };
 
         line1
             .run("\n", xpui::TextStyle::new())
-            .run(usage_mid, xpui::TextStyle::new())
+            .run(usage_mid_left, usage_left_style)
+            .run(" ".repeat(mid_spaces), xpui::TextStyle::new())
+            .run(usage_mid_right, usage_right_style)
             .into_node()
     }
 
-    fn mode_colors(&self) -> (xpui::Rgb, xpui::Rgb) {
+    fn selected_model_parts(&self) -> (String, String) {
+        let raw = self.chat.selected_model.borrow().trim().to_string();
+        if raw.is_empty() {
+            return ("OpenRouter".to_string(), "GPT-4.1".to_string());
+        }
+        if let Some((provider, name)) = raw.split_once(' ') {
+            (provider.to_string(), name.trim().to_string())
+        } else {
+            ("OpenRouter".to_string(), raw)
+        }
+    }
+
+    fn mode_surface_colors(&self) -> (xpui::Rgb, xpui::Rgb) {
+        match self.mode {
+            AgentMode::Safe => (xpui::rgb(0x1f4d2b), xpui::rgb(0xf2fbf4)),
+            AgentMode::Autonomous => (xpui::rgb(0x1f3f66), xpui::rgb(0xf2f7fc)),
+            AgentMode::Jailbreaking => (xpui::rgb(0x6b2f2f), xpui::rgb(0xfcf3f3)),
+        }
+    }
+
+    fn mode_tag_colors(&self) -> (xpui::Rgb, xpui::Rgb) {
         match self.mode {
             AgentMode::Safe => (xpui::rgb(0x132a13), xpui::rgb(0xb7f7c0)),
             AgentMode::Autonomous => (xpui::rgb(0x10243d), xpui::rgb(0xb3e3ff)),
@@ -377,23 +421,99 @@ impl DemoApp {
 
     fn status_bar_node(&self, width: usize) -> xpui::Node {
         let left = format!("Dir: {}", self.current_dir);
-        let right = format!(" Mode: {} ", self.mode.label());
+        let mode_label = self.mode.title();
+        let mode_tag = format!(" {} ", "MODE");
+        let mode_value = format!(" {} ", mode_label);
+        let right_plain = format!("{mode_tag}{mode_value}");
         let left_w = left.width();
-        let right_w = right.width();
+        let right_w = right_plain.width();
         let spaces = if left_w + right_w + 1 > width {
             1
         } else {
             width - left_w - right_w
         };
-        let (mode_bg, mode_fg) = self.mode_colors();
+        let (tag_fg, tag_bg) = self.mode_tag_colors();
+        let (value_fg, value_bg) = self.mode_surface_colors();
+        let mode_tag_style = xpui::TextStyle::new().bg(tag_bg).color(tag_fg).bold();
+        let mode_value_style = xpui::TextStyle::new().bg(value_bg).color(value_fg).bold();
 
         xpui::text(left)
             .run(" ".repeat(spaces), xpui::TextStyle::new())
-            .run(
-                right,
-                xpui::TextStyle::new().bg(mode_bg).color(mode_fg).bold(),
-            )
+            .run(mode_tag, mode_tag_style)
+            .run(mode_value, mode_value_style)
             .into_node()
+    }
+
+    fn history_viewport_lines(&self) -> u16 {
+        let dynamic_input_max = ((self.window_size.height * 0.20).floor() as u16).max(5);
+        let input_wrap_width = (self.window_size.width as usize).max(8);
+        let (input_visual_lines, _) = self.input_visual_metrics(input_wrap_width);
+        let input_viewport_lines = input_visual_lines.clamp(1, dynamic_input_max);
+        let terminal_lines = (self.window_size.height as u16).max(1);
+        let reserved_without_history = 6u16.saturating_add(input_viewport_lines);
+        terminal_lines.saturating_sub(reserved_without_history).max(3)
+    }
+
+    fn input_viewport_lines(&self) -> u16 {
+        let dynamic_input_max = ((self.window_size.height * 0.20).floor() as u16).max(5);
+        let input_wrap_width = (self.window_size.width as usize).max(8);
+        let (input_visual_lines, _) = self.input_visual_metrics(input_wrap_width);
+        input_visual_lines.clamp(1, dynamic_input_max)
+    }
+
+    fn input_layout_for_click(&self) -> (usize, u16, u16, usize) {
+        let line_count = self.chat.input.value().split('\n').count().max(1);
+        let gutter_digits = line_count.to_string().len();
+        let input_total_width = (self.window_size.width as usize).max(8);
+        let content_width = input_total_width.saturating_sub(gutter_digits + 3).max(1);
+        let dynamic_input_max = ((self.window_size.height * 0.20).floor() as u16).max(5);
+        let (input_visual_lines, _) = self.input_visual_metrics(input_total_width);
+        let input_viewport_lines = input_visual_lines.clamp(1, dynamic_input_max);
+        let input_offset_lines = self
+            .input_scroll_offset
+            .min(input_visual_lines.saturating_sub(input_viewport_lines));
+        (content_width, input_viewport_lines, input_offset_lines, gutter_digits)
+    }
+
+    fn input_max_scroll_offset(&self) -> u16 {
+        let input_total_width = (self.window_size.width as usize).max(8);
+        let (input_visual_lines, _) = self.input_visual_metrics(input_total_width);
+        let input_viewport_lines = self.input_viewport_lines();
+        input_visual_lines.saturating_sub(input_viewport_lines)
+    }
+
+    fn clamp_input_scroll_offset(&mut self) {
+        self.input_scroll_offset = self.input_scroll_offset.min(self.input_max_scroll_offset());
+    }
+
+    fn history_item_at_row(&self, row: u16) -> Option<u16> {
+        let line = self.nav.list.scroll_offset().saturating_add(row);
+        let mut top = 0u16;
+        for index in 0..self.nav.list.item_count() {
+            let height = self.nav.list.item_height(index);
+            let bottom = top.saturating_add(height);
+            if line >= top && line < bottom {
+                return Some(index);
+            }
+            top = bottom.saturating_add(Self::ITEM_GAP_LINES);
+        }
+        None
+    }
+
+    fn is_mode_click(&self, x: u16, y: u16) -> bool {
+        let width = self.window_size.width as usize;
+        let height = self.window_size.height as u16;
+        if width == 0 || height == 0 || y != height.saturating_sub(1) {
+            return false;
+        }
+
+        let mode_label = self.mode.title();
+        let mode_tag = format!(" {} ", "MODE");
+        let mode_value = format!(" {} ", mode_label);
+        let right_plain = format!("{mode_tag}{mode_value}");
+        let right_w = right_plain.width();
+        let start = width.saturating_sub(right_w) as u16;
+        x >= start
     }
 }
 
@@ -441,11 +561,10 @@ impl xpui::UiApp for DemoApp {
         let scroll_focused = self.is_scroll_focused();
         let dynamic_input_max = ((self.window_size.height * 0.20).floor() as u16).max(5);
         let input_wrap_width = (self.window_size.width as usize).max(8);
-        let (input_visual_lines, cursor_line) = self.input_visual_metrics(input_wrap_width);
+        let (input_visual_lines, _) = self.input_visual_metrics(input_wrap_width);
         let input_viewport_lines = input_visual_lines.clamp(1, dynamic_input_max);
-        let input_offset_lines = cursor_line
-            .saturating_add(1)
-            .saturating_sub(input_viewport_lines);
+        let max_input_offset = input_visual_lines.saturating_sub(input_viewport_lines);
+        let input_offset_lines = self.input_scroll_offset.min(max_input_offset);
         let terminal_lines = (self.window_size.height as u16).max(1);
         // input(1 block) + help(2) + status(1) + vertical gaps(3)
         let reserved_without_history = 6u16.saturating_add(input_viewport_lines);
@@ -511,7 +630,11 @@ impl xpui::UiApp for DemoApp {
                 )
                 .child(
                     xpui::container(self.status_bar_node(self.window_size.width as usize))
-                        .style(xpui::BoxStyle::default().text_color(xpui::rgb(0x8b949e))),
+                        .style(
+                            xpui::BoxStyle::default()
+                                .bg(xpui::rgb(0x161b22))
+                                .text_color(xpui::rgb(0xa5b1c2)),
+                        ),
                 ),
         )
         .style(xpui::BoxStyle::default().text_color(xpui::rgb(0xe6edf3)))
@@ -519,6 +642,41 @@ impl xpui::UiApp for DemoApp {
     }
 
     fn on_input(&mut self, event: xpui::UiInputEvent) {
+        if let xpui::UiInputEvent::MouseDown { x, y } = event {
+            if self.is_mode_click(x, y) {
+                self.mode = self.mode.cycle();
+                return;
+            }
+
+            let history_lines = self.history_viewport_lines();
+            if y < history_lines
+                && let Some(index) = self.history_item_at_row(y)
+            {
+                self.nav.list.set_focused_index(index);
+                self.nav
+                    .focus
+                    .set_focused(self.nav.list_binding.focus_id(index));
+                return;
+            }
+
+            let input_top = history_lines.saturating_add(1);
+            let (content_width, input_viewport_lines, input_offset_lines, gutter_digits) =
+                self.input_layout_for_click();
+            let input_bottom = input_top.saturating_add(input_viewport_lines);
+            if y >= input_top && y < input_bottom {
+                self.nav.focus.set_focused(xpui::FocusId(Self::INPUT_ID));
+                let local_row = y.saturating_sub(input_top) as usize;
+                let visual_row = usize::from(input_offset_lines).saturating_add(local_row);
+                let content_x = x.saturating_sub((gutter_digits + 3) as u16) as usize;
+                self.chat
+                    .input
+                    .set_cursor_from_visual_position(visual_row, content_x, content_width);
+                return;
+            }
+
+            return;
+        }
+
         if matches!(event, xpui::UiInputEvent::Key(xpui::UiKeyInput::ShiftTab)) {
             self.mode = self.mode.cycle();
             return;
@@ -530,14 +688,49 @@ impl xpui::UiApp for DemoApp {
         let input_content_width = input_total_width.saturating_sub(gutter_digits + 3).max(1);
         self.chat.input.set_soft_wrap_width(Some(input_content_width));
 
-        if self.is_input_focused()
-            && matches!(event, xpui::UiInputEvent::Key(xpui::UiKeyInput::Submit))
-        {
-            let _ = self.chat.submit_input();
-            return;
-        }
-        if self.is_input_focused() && self.chat.input.handle_input(event) {
-            return;
+        if self.is_input_focused() {
+            if let xpui::UiInputEvent::ScrollLines(lines) = event {
+                let max_offset = self.input_max_scroll_offset();
+                if lines < 0 {
+                    self.input_scroll_offset = self.input_scroll_offset.saturating_sub(1);
+                } else if lines > 0 {
+                    self.input_scroll_offset = self.input_scroll_offset.saturating_add(1);
+                }
+                self.input_scroll_offset = self.input_scroll_offset.min(max_offset);
+                return;
+            }
+
+            if matches!(event, xpui::UiInputEvent::Key(xpui::UiKeyInput::Submit)) {
+                let _ = self.chat.submit_input();
+                return;
+            }
+
+            let key = match event {
+                xpui::UiInputEvent::Key(key) => Some(key),
+                _ => None,
+            };
+            if self.chat.input.handle_input(event) {
+                if matches!(
+                    key,
+                    Some(
+                        xpui::UiKeyInput::Up
+                            | xpui::UiKeyInput::Down
+                            | xpui::UiKeyInput::Enter
+                            | xpui::UiKeyInput::Home
+                            | xpui::UiKeyInput::End
+                    )
+                ) {
+                    let (_, cursor_line) =
+                        self.input_visual_metrics((self.window_size.width as usize).max(8));
+                    let viewport = self.input_viewport_lines();
+                    let min_offset = cursor_line.saturating_add(1).saturating_sub(viewport);
+                    let max_offset = cursor_line;
+                    self.input_scroll_offset =
+                        self.input_scroll_offset.clamp(min_offset, max_offset);
+                }
+                self.clamp_input_scroll_offset();
+                return;
+            }
         }
         let _ = self
             .nav

@@ -11,6 +11,10 @@ impl FocusState {
         let key = match event {
             UiInputEvent::Key(key) => key,
             UiInputEvent::Tick => return FocusNavOutcome::Ignored,
+            UiInputEvent::MouseDown { .. } => {
+                self.disarm_quit();
+                return FocusNavOutcome::Ignored;
+            }
             UiInputEvent::ScrollLines(_) => {
                 self.disarm_quit();
                 return FocusNavOutcome::Ignored;

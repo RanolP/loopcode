@@ -85,6 +85,7 @@ pub enum KeyInput {
 pub enum InputEvent {
     Key(KeyInput),
     ScrollLines(i16),
+    MouseDown { x: u16, y: u16 },
     Tick,
 }
 

@@ -28,6 +28,7 @@ pub enum UiKeyInput {
 pub enum UiInputEvent {
     Key(UiKeyInput),
     ScrollLines(i16),
+    MouseDown { x: u16, y: u16 },
     Tick,
 }
 

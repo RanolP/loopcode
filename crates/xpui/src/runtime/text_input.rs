@@ -43,6 +43,17 @@ impl TextInputState {
         self.soft_wrap_width = width.map(|w| w.max(1));
     }
 
+    pub fn set_cursor_from_visual_position(
+        &mut self,
+        visual_row: usize,
+        visual_col: usize,
+        wrap_width: usize,
+    ) {
+        let width = wrap_width.max(1);
+        self.cursor = cursor_for_visual_row_col(&self.value, width, visual_row, visual_col);
+        self.preferred_column = None;
+    }
+
     pub fn handle_input(&mut self, event: UiInputEvent) -> bool {
         let UiInputEvent::Key(key) = event else {
             return false;

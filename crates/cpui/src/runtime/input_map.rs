@@ -44,6 +44,12 @@ pub(crate) fn map_input_event(event: Event) -> Option<InputEvent> {
         Event::Mouse(mouse) => match mouse.kind {
             MouseEventKind::ScrollUp => Some(InputEvent::ScrollLines(-3)),
             MouseEventKind::ScrollDown => Some(InputEvent::ScrollLines(3)),
+            MouseEventKind::Down(crossterm::event::MouseButton::Left) => Some(
+                InputEvent::MouseDown {
+                    x: mouse.column,
+                    y: mouse.row,
+                },
+            ),
             _ => None,
         },
         _ => None,
