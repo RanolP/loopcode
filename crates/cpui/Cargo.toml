@@ -5,5 +5,5 @@ edition = "2024"
 
 [dependencies]
 crossterm = "0.29"
-taffy = "0.7"
+taffy = "0.9"
 unicode-width = "0.2"

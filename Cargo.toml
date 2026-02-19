@@ -10,3 +10,6 @@ members = ["crates/*"]
 clap = { version = "4", features = ["derive"] }
 xpui = { path = "crates/xpui", features = ["backend-gpui"] }
 unicode-width = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-text = "=21.0.0"

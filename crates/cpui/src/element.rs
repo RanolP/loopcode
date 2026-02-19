@@ -305,13 +305,13 @@ fn taffy_style_from(div: &Div) -> taffy::style::Style {
         width: div
             .style
             .width
-            .map(|w| Dimension::Length(w.0))
-            .unwrap_or(Dimension::Auto),
+            .map(|w| Dimension::length(w.0))
+            .unwrap_or_else(Dimension::auto),
         height: div
             .style
             .height
-            .map(|h| Dimension::Length(h.0))
-            .unwrap_or(Dimension::Auto),
+            .map(|h| Dimension::length(h.0))
+            .unwrap_or_else(Dimension::auto),
     };
 
     if let Some(columns) = div.style.grid_columns {
@@ -338,8 +338,8 @@ fn build_layout_tree(
                 flex_grow: 0.0,
                 flex_shrink: 0.0,
                 size: Size {
-                    width: Dimension::Length(inline.wrapped_width_chars(wrap_width) as f32),
-                    height: Dimension::Length(inline.wrapped_height_lines(wrap_width) as f32),
+                    width: Dimension::length(inline.wrapped_width_chars(wrap_width) as f32),
+                    height: Dimension::length(inline.wrapped_height_lines(wrap_width) as f32),
                 },
                 ..Default::default()
             };
@@ -356,8 +356,8 @@ fn build_layout_tree(
                 flex_grow: 0.0,
                 flex_shrink: 0.0,
                 size: Size {
-                    width: Dimension::Length(inline.wrapped_width_chars(wrap_width) as f32),
-                    height: Dimension::Length(inline.wrapped_height_lines(wrap_width) as f32),
+                    width: Dimension::length(inline.wrapped_width_chars(wrap_width) as f32),
+                    height: Dimension::length(inline.wrapped_height_lines(wrap_width) as f32),
                 },
                 ..Default::default()
             };
@@ -409,11 +409,11 @@ fn build_layout_tree(
                     y: Overflow::Hidden,
                 },
                 size: Size {
-                    width: Dimension::Auto,
+                    width: Dimension::auto(),
                     height: scroll
                         .viewport_lines
-                        .map(|h| Dimension::Length(h as f32))
-                        .unwrap_or(Dimension::Auto),
+                        .map(|h| Dimension::length(h as f32))
+                        .unwrap_or_else(Dimension::auto),
                 },
                 ..Default::default()
             };
@@ -455,8 +455,8 @@ pub(crate) fn render_element(
     )?;
     let mut root_style = taffy.style(root).map_err(io::Error::other)?.clone();
     root_style.size = Size {
-        width: Dimension::Length(terminal_width as f32),
-        height: Dimension::Length(terminal_height as f32),
+        width: Dimension::length(terminal_width as f32),
+        height: Dimension::length(terminal_height as f32),
     };
     taffy
         .set_style(root, root_style)
